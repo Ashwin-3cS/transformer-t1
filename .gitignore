@@ -1,0 +1,8 @@
+.venv/
+data/
+artifacts/
+__pycache__/
+.ipynb_checkpoints/
+
+# Contains a live Kaggle API token in plaintext - never commit.
+api.txt
