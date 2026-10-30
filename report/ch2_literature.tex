@@ -1,0 +1,214 @@
+\chapter{Literature Review}
+\label{ch:literature}
+
+\section{Overview}
+
+This chapter traces the development of neural text classification in order to establish where the
+present comparison sits. The narrative is organised around a single recurring question: \emph{how
+is word order represented?} Each major advance in the field can be read as a different answer to
+that question, and the two architectures compared in this report represent the two most recent
+answers.
+
+\section{The sparse feature era}
+
+The earliest statistical approaches to text classification represented a document as a vector of
+term counts or weighted term frequencies, discarding word order entirely. The bag-of-words model,
+typically weighted by term frequency--inverse document frequency (TF--IDF), paired with a linear
+classifier such as multinomial Naive Bayes or a support vector machine, formed the standard
+baseline for many years \cite{joachims1998}.
+
+These methods remain surprisingly competitive on topic classification specifically. Topic is
+largely signalled by lexical choice: the presence of the words \emph{quarterly}, \emph{earnings}
+and \emph{shares} is close to sufficient evidence for a business story, irrespective of the order
+in which those words appear. This observation matters for the present study, because it implies
+that topic classification is a task where sequential modelling has comparatively little to
+contribute --- a point returned to in Chapter~\ref{ch:discussion}.
+
+The principal weaknesses of the sparse approach are the dimensionality of the feature space, the
+absence of any notion of semantic similarity between distinct terms, and the inability to
+represent negation, modification or any other order-dependent phenomenon.
+
+\section{Distributed word representations}
+
+The second weakness was addressed by distributed representations. Word2Vec \cite{mikolov2013}
+and GloVe \cite{pennington2014} learn dense, low-dimensional vectors such that distributionally
+similar words occupy nearby regions of the space. A document can then be represented by, for
+example, the mean of its word vectors --- a representation that generalises across synonyms in a
+way that sparse indicators cannot.
+
+Word order, however, remains unmodelled. Averaging word vectors is still a bag-of-words
+operation. The FastText classifier \cite{joulin2017} demonstrated that this simple approach,
+with the addition of character n-gram features, achieves strong results on topic classification at
+a tiny fraction of the computational cost of neural sequence models --- again suggesting that the
+marginal value of sequence modelling on this class of task is modest.
+
+\section{Recurrent neural networks}
+
+Recurrent neural networks introduced genuine sequential modelling. An RNN maintains a hidden state
+$h_t$ that is updated at each timestep as a function of the current input and the previous state,
+so that in principle $h_T$ summarises the entire sequence.
+
+In practice, the simple recurrent formulation suffers from the vanishing and exploding gradient
+problem, analysed by Bengio et al.\ \cite{bengio1994} and later in detail by Pascanu et al.\
+\cite{pascanu2013}. Because backpropagation through time multiplies Jacobian matrices once per
+timestep, gradient magnitude decays or grows geometrically with the distance over which credit
+must be assigned. The practical consequence is that simple RNNs fail to learn dependencies
+spanning more than a handful of timesteps. The formal statement of this result is developed in
+Section~\ref{sec:vanishing}.
+
+\section{Long Short-Term Memory}
+
+The Long Short-Term Memory architecture of Hochreiter and Schmidhuber \cite{hochreiter1997}
+addresses the gradient pathology directly. LSTM introduces a separate \emph{cell state} that is
+modified by additive rather than multiplicative interactions, and three multiplicative gates ---
+input, forget and output --- that control the flow of information into, within and out of the
+cell. Gers et al.\ \cite{gers2000} subsequently added the forget gate in the form now considered
+standard.
+
+The critical structural property is that the cell state path from $c_{t-1}$ to $c_t$ passes through
+an addition and an elementwise multiplication by the forget gate, rather than through a weight
+matrix and a saturating nonlinearity. When the forget gate is near one, gradients propagate
+backwards along this path essentially unattenuated. This is the mechanism by which LSTM extends
+the effective credit-assignment horizon from a handful of timesteps to hundreds.
+
+The Gated Recurrent Unit \cite{cho2014} simplifies the LSTM to two gates and a single state
+vector, with broadly comparable empirical performance and fewer parameters. The present study uses
+LSTM rather than GRU because its gate structure is the canonical formulation and its correspondence
+with the reference implementation used for verification (Chapter~\ref{ch:verification}) is exact.
+
+\section{Bidirectionality}
+
+A unidirectional recurrent network computes a representation of each position conditioned only on
+the preceding context. For classification --- where the entire document is available at inference
+time and there is no requirement to generate left to right --- this is an unnecessary restriction.
+Bidirectional recurrent networks \cite{schuster1997} run two independent recurrences, one in each
+direction, and concatenate the resulting representations, so that each position is contextualised
+by both its left and right neighbourhoods.
+
+Bidirectionality is standard in recurrent text classification and is used in the present study.
+Note that it doubles the sequential computation, which is relevant to the cost analysis in
+Chapter~\ref{ch:results}.
+
+\section{Attention}
+
+Attention was introduced by Bahdanau et al.\ \cite{bahdanau2015} in the context of neural machine
+translation, as a mechanism to relieve the bottleneck of compressing an entire source sentence
+into a single fixed-length vector. Rather than conditioning on a single summary state, the decoder
+computes a weighted combination of all encoder states, with weights determined by a learned
+compatibility function between the decoder's current state and each encoder position.
+
+Luong et al.\ \cite{luong2015} simplified the compatibility function to a dot product and
+systematised the variants. The essential insight --- that a model can learn \emph{where to look}
+rather than being forced to summarise everything into one vector --- proved far more general than
+its original application.
+
+\section{The Transformer}
+
+Vaswani et al.\ \cite{vaswani2017} took the decisive step of removing recurrence entirely. The
+Transformer computes representations using \emph{self}-attention, in which every position attends
+to every other position in the same sequence, combined with position-wise feed-forward layers,
+residual connections and layer normalisation \cite{ba2016}.
+
+Two properties of this design are central to the argument of this report.
+
+\keypoint{Constant path length.} In a recurrent network, information must traverse $O(n)$
+sequential steps to travel between positions $n$ apart. In self-attention, every pair of positions
+is connected directly, so the path length is $O(1)$. This is the structural basis of the
+Transformer's advantage on long-range dependency.
+
+\keypoint{Parallelism.} Recurrence is inherently sequential: step $t$ cannot be computed until step
+$t-1$ is complete. Self-attention has no such constraint; all positions are computed
+simultaneously as a batched matrix product. On parallel hardware this translates directly into
+reduced wall-clock time per training step.
+
+Because self-attention is permutation-invariant, positional information must be injected
+explicitly. The original work uses fixed sinusoidal encodings; learned positional embeddings are a
+common alternative. The pre-norm variant of the residual block, in which layer normalisation is
+applied before rather than after each sublayer, was shown by Xiong et al.\ \cite{xiong2020} to
+yield better-conditioned gradients at initialisation and to remove the need for a learning-rate
+warmup schedule. The present study uses the pre-norm arrangement for precisely this reason.
+
+\section{Pretrained language models}
+
+BERT \cite{devlin2019} demonstrated that a Transformer encoder pretrained on a large unlabelled
+corpus with a masked language modelling objective, then fine-tuned on a downstream task,
+substantially outperforms task-specific architectures trained from scratch. The paradigm now
+dominates the field, with RoBERTa \cite{liu2019} and numerous successors refining the recipe.
+
+It is important to be precise about what this result establishes. The gain attributable to BERT on
+a task such as AG News comes overwhelmingly from \emph{pretraining} --- from representations
+learned on billions of words of unlabelled text --- rather than from self-attention as an
+architectural primitive. Conflating the two is a common error, and the present study is explicitly
+designed to avoid it: by training both architectures from scratch on identical data, the
+comparison isolates the architectural contribution.
+
+\section{Large language models and the current landscape}
+
+The most recent development is the application of large generative language models to
+classification, either zero-shot, few-shot, or via instruction tuning. A 2024 study on text
+classification in the age of large language models \cite{mdpi2024} --- identified in the
+case-study brief as the related work for this topic --- examines this landscape and reports a
+finding directly relevant here: for well-specified classification tasks with adequate labelled
+data, compact supervised models remain competitive with, and far cheaper than, large generative
+models. The persistent value of small task-specific classifiers is a recurring conclusion in this
+literature, and it motivates continued careful study of exactly the architectures compared in this
+report.
+
+\section{Prior results on AG News}
+
+AG News was introduced as a classification benchmark by Zhang et al.\ \cite{zhang2015}, who used
+it to evaluate character-level convolutional networks. It has since become a standard
+four-class topic classification benchmark. Table~\ref{tab:prior} summarises representative
+published accuracies.
+
+\begin{table}[ht]
+\centering
+\caption[Representative published results on AG News]{Representative published test accuracies on
+the AG News benchmark. Figures are as reported in the cited work and are not strictly comparable,
+since training budgets, preprocessing and the use of pretraining differ. They are presented to
+situate the present study rather than to rank methods.}
+\label{tab:prior}
+\begin{tabular}{lll}
+\toprule
+\textbf{Approach} & \textbf{Family} & \textbf{Reported accuracy} \\
+\midrule
+Bag of words + linear classifier \cite{zhang2015}   & Sparse features   & $\approx 88.8\%$ \\
+FastText \cite{joulin2017}                          & Embedding average & $\approx 92.5\%$ \\
+Character-level CNN \cite{zhang2015}                & Convolutional     & $\approx 90.5\%$ \\
+Word-level CNN / LSTM baselines \cite{zhang2015}    & Neural sequence   & $\approx 90$--$92\%$ \\
+BERT-base fine-tuned \cite{devlin2019,liu2019}      & Pretrained Transformer & $\approx 94$--$95\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three observations follow from this table and are important context for the results reported later.
+
+First, the spread between a simple bag-of-words classifier and a fine-tuned BERT model is roughly
+six percentage points. This is a comparatively narrow band, and it indicates that AG News is a
+task on which lexical evidence carries most of the signal.
+
+Second, the models in the middle of this range --- FastText, character CNNs, word-level recurrent
+and convolutional baselines --- are clustered tightly around 90--92\%. Architectures of very
+different character arrive at very similar accuracy, which is itself suggestive.
+
+Third, the models at the top of the range are distinguished by pretraining, not by architecture.
+The present study, which trains from scratch, should therefore be expected to land in the 90--92\%
+band, and does.
+
+\section{Research gap}
+
+The literature establishes that Transformers outperform recurrent networks on a wide range of
+tasks, and that pretrained Transformers outperform everything. What is less well documented is a
+careful, controlled comparison of the two architectures \emph{at matched capacity}, \emph{without
+pretraining}, on \emph{short} text, with \emph{statistical testing} of the resulting difference.
+
+Published comparisons frequently differ in parameter count, training budget, preprocessing or
+tokenisation between the systems being compared, which makes the attribution of any observed
+difference to architecture unsafe. Significance testing of classification differences is uncommon,
+despite accuracy differences of under one percentage point being routinely reported as
+improvements.
+
+This report addresses that gap for one specific and practically important regime: short-text topic
+classification. It holds data, preprocessing, capacity and training budget fixed; it verifies both
+implementations numerically before drawing conclusions from them; and it applies a paired
+significance test to the resulting predictions.

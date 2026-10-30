@@ -1,0 +1,9 @@
+*.aux
+*.log
+*.toc
+*.lof
+*.lot
+*.out
+build_pass*.log
+b[0-9].log
+bf[0-9].log

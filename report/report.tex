@@ -1,0 +1,157 @@
+%=====================================================================
+%  News Topic Classification on AG News
+%  Sequential and Transformer models implemented from scratch
+%  Build:  pdflatex report  (x3, for TOC/refs)  -- see build.sh
+%=====================================================================
+\documentclass[11pt,a4paper,oneside]{report}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{url,verbatim,color,calc,ifthen,alltt}
+\usepackage[hidelinks]{hyperref}
+
+% ---- page geometry (set by hand; the geometry package is unavailable) -------
+\setlength{\oddsidemargin}{0.10in}
+\setlength{\evensidemargin}{0.10in}
+\setlength{\textwidth}{6.20in}
+\setlength{\topmargin}{-0.30in}
+\setlength{\headheight}{14pt}
+\setlength{\headsep}{20pt}
+\setlength{\textheight}{9.15in}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+
+% ---- booktabs-style rules (the booktabs package is unavailable) -------------
+\newcommand{\toprule}{\hline}
+\newcommand{\midrule}{\hline}
+\newcommand{\bottomrule}{\hline}
+\renewcommand{\arraystretch}{1.25}
+
+% ---- colours used in tables/notes ------------------------------------------
+\definecolor{accent}{rgb}{0.165,0.471,0.839}
+\definecolor{warm}{rgb}{0.922,0.408,0.204}
+\definecolor{greyink}{rgb}{0.32,0.32,0.30}
+
+% ---- helpers ---------------------------------------------------------------
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\bs}{\char`\\}
+\newcommand{\us}{\char`\_}
+% The TS1 text-symbol fonts are not installed in this TeX distribution, so the
+% default \textbullet item label is unavailable. Use the math bullet instead.
+\renewcommand{\labelitemi}{$\bullet$}
+\renewcommand{\labelitemii}{$\circ$}
+\newcommand{\paperterm}[1]{\textit{#1}}
+\newcommand{\keypoint}[1]{\par\vspace{3pt}\noindent\textbf{#1}}
+
+\hyphenation{Trans-for-mer BiL-STM clas-si-fi-ca-tion}
+
+\begin{document}
+
+%=====================================================================
+\begin{titlepage}
+\centering
+\vspace*{0.6in}
+
+{\Large\bfseries A Comparative Study of Recurrent and\\[6pt]
+Self-Attentive Architectures for\\[6pt]
+News Topic Classification}\\[10pt]
+
+{\large Sequential and Transformer models implemented from first principles\\
+and evaluated on the AG News corpus}\\[0.5in]
+
+\rule{\textwidth}{0.8pt}\\[0.25in]
+
+{\large\textbf{Case Study Report}}\\[6pt]
+{\large Transformer Modeling and Sequence Learning}\\[6pt]
+{\large Topic 2 --- News Topic Classification Using Sequential and Transformer Models}\\[0.3in]
+
+\rule{\textwidth}{0.8pt}\\[0.5in]
+
+\begin{tabular}{rl}
+\textbf{Research question} & How do recurrent networks and Transformers compare\\
+                           & at classifying short news texts?\\[8pt]
+\textbf{Dataset}           & AG News --- 120{,}000 training / 7{,}600 test articles\\
+                           & four classes: World, Sports, Business, Sci/Tech\\[8pt]
+\textbf{Models}            & Bidirectional LSTM (hand-written cell and recurrence)\\
+                           & Transformer encoder (hand-written self-attention)\\[8pt]
+\textbf{Headline result}   & 91.14\% vs 91.05\% test accuracy;\\
+                           & difference not statistically significant ($p = 0.754$)\\
+\end{tabular}
+
+\vfill
+{\large Source code and executed notebook:}\\[4pt]
+\url{https://github.com/Ashwin-3cS/transformer-t1}\\[0.3in]
+{\large \today}
+\end{titlepage}
+
+%=====================================================================
+\pagenumbering{roman}
+\setcounter{page}{2}
+
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+This report presents a controlled empirical comparison of two families of sequence model on the
+task of four-class news topic classification. A bidirectional Long Short-Term Memory network and a
+Transformer encoder are implemented from first principles --- the LSTM gating equations, the
+unrolled recurrence, scaled dot-product attention, multi-head projection, sinusoidal positional
+encoding and layer normalisation are all written by hand rather than invoked from a deep learning
+library --- and are trained and evaluated under an experimental protocol designed so that
+architecture is the only free variable.
+
+The study uses the AG News corpus. Following the case-study brief, a stratified subset of 60{,}000
+records is drawn from the 120{,}000-document training file and split into 54{,}000 training and
+6{,}000 validation examples, while the full official 7{,}600-document test set is held back for a
+single final evaluation. Both models consume an identical vocabulary, identical tensors and an
+identical training budget, and are matched to within 0.19\% on non-embedding parameter count.
+
+Before any training is performed, nine numerical checks verify the hand-written layers against
+reference implementations and against invariants that a correct implementation must satisfy. All
+nine pass. This verification step is reported as a substantive part of the methodology rather than
+as an implementation detail, because the characteristic failure mode of a hand-written layer is not
+a crash but a silently degraded result.
+
+The principal finding is negative and is reported as such. The two architectures achieve 91.14\%
+and 91.05\% test accuracy respectively, a difference of 0.09 percentage points. McNemar's exact
+test on the paired predictions yields $p = 0.754$, and the models agree on 94.78\% of test
+documents, so the difference cannot be distinguished from sampling noise. The two models further
+exhibit an identical per-class difficulty ordering and share the same dominant error, confusing
+Business with Sci/Tech in approximately 9.4\% of Business documents. The report argues that this
+equivalence is a consequence of document length: AG News items have a median of 39 tokens, and
+self-attention's structural advantage --- constant path length between distant positions --- has
+little to act upon at that scale.
+
+A secondary finding concerns computational cost and runs contrary to the usual expectation. On the
+CPU-only hardware used here, and at a sequence length of 64 tokens, the recurrent model trained
+1.67 times faster per epoch than the Transformer. The report analyses why, distinguishing the
+asymptotic argument for attention --- which concerns parallelisability and growth in sequence
+length --- from the constant factors that in fact determine wall-clock time in this regime.
+
+\vspace{8pt}
+\noindent\textbf{Keywords:} text classification, recurrent neural networks, long short-term memory,
+self-attention, Transformer, AG News, McNemar's test, reproducible machine learning.
+
+%=====================================================================
+\tableofcontents
+\listoffigures
+\listoftables
+
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+%=====================================================================
+\input{ch1_introduction}
+\input{ch2_literature}
+\input{ch3_theory}
+\input{ch4_methodology}
+\input{ch5_implementation}
+\input{ch6_verification}
+\input{ch7_results}
+\input{ch8_discussion}
+\input{ch9_conclusion}
+\input{references}
+\input{appendices}
+
+\end{document}

@@ -1,0 +1,172 @@
+\chapter{Discussion}
+\label{ch:discussion}
+
+\section{Answering the research question}
+
+The research question was: \emph{how do recurrent networks and Transformers compare at classifying
+short news texts?} The evidence of Chapter~\ref{ch:results} supports a four-part answer.
+
+\subsection{They are indistinguishable in accuracy}
+
+The measured difference is 0.09 percentage points. McNemar's exact test on the paired predictions
+gives $p = 0.754$, the models agree on 94.78\% of test documents, and the discordant set splits 187
+to 180. There is no basis in this evidence for preferring either architecture on accuracy grounds.
+
+This is a negative result, and it is reported as the principal finding rather than buried. Negative
+results of this kind are underreported in the literature, with the consequence that accuracy
+differences well inside the noise floor are routinely presented as architectural improvements. The
+discipline of applying a paired significance test is what converts an apparent 0.09-point win into
+the correct conclusion of equivalence.
+
+\subsection{The explanation is document length}
+
+The equivalence is not a coincidence, and it is not evidence that self-attention is overrated in
+general. It follows from a specific property of the data.
+
+Self-attention's structural advantage, established in Table~\ref{tab:complexity}, is a maximum path
+length of $O(1)$ between any two positions, against $O(n)$ for recurrence. This is an advantage in
+modelling \emph{long-range} dependency.
+
+The median AG News document is 39 tokens long. In a 39-token document there are essentially no
+long-range dependencies to model. The furthest two tokens can be is a few dozen positions, which a
+bidirectional LSTM traverses without difficulty --- this is precisely the regime the gating
+mechanism of Section~\ref{sec:vanishing} was designed to handle, and it is two orders of magnitude
+short of where the gating mechanism begins to fail.
+
+Furthermore, the signal in topic classification is overwhelmingly lexical. The presence of
+\emph{coach}, \emph{Olympic} and \emph{medal} identifies a sports story regardless of their
+arrangement. This observation is corroborated independently by the literature: FastText, which
+averages word vectors and models no order whatsoever, reaches approximately 92.5\% on this
+benchmark (Table~\ref{tab:prior}) --- at or above both models in this study. If a bag-of-embeddings
+model is competitive, then the marginal value of \emph{any} sequence modelling on this task is
+small, and the marginal value of one sequence model over another is smaller still.
+
+\keypoint{The general form of the argument.} An architecture's advantage can only be realised on a
+task that exercises the property the architecture is good at. Transformers are superior at modelling
+long-range dependency; AG News contains almost none; therefore the two architectures perform
+equivalently. This is not a limitation of the Transformer but a statement about the task.
+
+\subsection{They fail in the same way}
+
+The equivalence runs deeper than aggregate accuracy. The two models share:
+
+\begin{itemize}
+\item an identical per-class difficulty ordering (Sports, World, Sci/Tech, Business),
+\item near-identical per-class $F_1$, agreeing to four decimal places on Business,
+\item the same dominant confusion, Business predicted as Sci/Tech, at 9.2\% and 9.6\%,
+\item agreement on 94.78\% of individual test predictions.
+\end{itemize}
+
+Two models with materially different inductive biases would be expected to differ somewhere in this
+profile even at equal overall accuracy. That they do not indicates both are limited by the same
+external factor. The error analysis of Chapter~\ref{ch:results} identifies that factor: documents
+whose gold label is one of several admissible choices. A story about a semiconductor firm's
+quarterly earnings is legitimately Business and legitimately Sci/Tech; the corpus assigns one
+label, and no model can recover the other.
+
+This is an irreducible component of the error, a property of the annotation rather than of either
+model, and it caps what any architecture can achieve on this benchmark.
+
+\subsection{Cost is where they differ, and the finding inverts expectation}
+
+At matched accuracy and matched capacity, the recurrent model trained 1.67 times faster per epoch
+and performed inference 2.43 times faster.
+
+Section~\ref{sec:cost} analyses why. The summary is that the Transformer's advantage is
+\emph{asymptotic} --- it concerns parallelisability and the growth of sequential depth with
+sequence length --- and that neither condition for realising it holds in this experiment. There is
+negligible hardware parallelism to exploit on six CPU threads, and at $n = 64$, $d = 128$ the
+$O(n d^2)$ and $O(n^2 d)$ arithmetic costs are of the same order, so self-attention does not even
+win on operation count.
+
+The honest framing is that this is a result about a \emph{regime}, not about the architectures in
+the abstract. Two predictions follow, and both are testable: the ordering should reverse on
+parallel hardware, and the recurrent model's relative cost should grow linearly with sequence
+length.
+
+\section{Comparison with published results}
+
+Both models fall within the 90--92\% band that Table~\ref{tab:prior} identifies for non-pretrained
+approaches on AG News. The study therefore reproduces the expected performance level, which
+provides weak corroboration that the pipeline as a whole is sound.
+
+The roughly three-point gap to fine-tuned BERT is instructive and is worth stating plainly, since
+it is frequently misattributed. That gap is \textbf{not} evidence that self-attention is a superior
+architecture. It is evidence that representations learned from billions of words of unlabelled text
+are superior to representations learned from 54{,}000 labelled headlines. The present study
+isolates architecture by holding pretraining constant at zero for both models, and under that
+control the architectural difference vanishes entirely.
+
+This distinction matters practically. An engineer choosing between a BiLSTM and a Transformer
+encoder for a short-text classification task, both trained from scratch, should not expect the
+accuracy gain reported for BERT to transfer to that choice.
+
+\section{Implications}
+
+\keypoint{For practice.} On short-text topic classification at this scale, selecting between these
+two architectures on expected accuracy is not supported by evidence. The decision should be made on
+engineering grounds --- latency, memory, deployment constraints, tooling --- and those costs should
+be \emph{measured on the target hardware and sequence length} rather than assumed from asymptotic
+arguments. The cost finding here is a concrete demonstration that the assumed ordering can be
+wrong.
+
+\keypoint{For evaluation methodology.} Reporting a sub-point accuracy difference without a paired
+significance test is not sound practice. The test applied here cost a few lines of code and
+reversed the qualitative conclusion, from ``the BiLSTM is slightly better'' to ``the models are
+indistinguishable''.
+
+\keypoint{For from-scratch implementation.} The verification suite of
+Chapter~\ref{ch:verification} is a transferable methodology. The key insight is that numerical code
+of this kind fails silently, so verification must consist of equivalence against independent
+implementations and assertion of mathematical invariants, not merely the observation that training
+loss decreases.
+
+\section{Threats to validity}
+\label{sec:threats}
+
+\subsection{Internal validity}
+
+\keypoint{Single seed.} This is the most serious limitation. Each architecture was trained once,
+with one seed. The observed 0.09-point difference is well within typical run-to-run variance for
+models of this size, which is precisely why Section~\ref{sec:significance} reports a significance
+test rather than a winner. The conclusion supported is ``indistinguishable''; a claim that one
+architecture is genuinely superior --- in either direction --- would require multiple seeds and a
+confidence interval. The study does not make such a claim.
+
+\keypoint{Learning rates differ.} Defended in Chapter~\ref{ch:method}: the controlled quantity is
+the compute budget, and both rates were selected on validation data. Residual risk remains that a
+more exhaustive search would favour one architecture.
+
+\keypoint{Both models overfit quickly.} The recurrent model peaked after one epoch. Stronger
+regularisation might alter the comparison, although both models were selected at their respective
+optima by the early-stopping criterion.
+
+\subsection{External validity}
+
+\keypoint{One corpus, one length regime.} All conclusions concern English short news text with a
+median length of 39 tokens. The central finding is explicitly \emph{conditional} on that length,
+and the report predicts it would not hold for longer documents.
+
+\keypoint{No pretraining.} The findings concern architectures trained from scratch and do not
+transfer to the pretrained setting.
+
+\keypoint{CPU-only timing.} Every figure in Section~\ref{sec:cost} is specific to the hardware of
+Table~\ref{tab:environment} and would be expected to change on a GPU.
+
+\keypoint{Reduced training set.} 60{,}000 of 120{,}000 available records were used, per the brief.
+The more parameter-hungry Transformer might benefit disproportionately from the full corpus.
+
+\subsection{Construct validity}
+
+\keypoint{Truncation.} \code{MAX\us{}LEN} of 64 truncates 3.06\% of training documents. This affects
+both models identically and is unlikely to bias the comparison.
+
+\keypoint{Simple tokenisation.} A subword tokeniser would likely raise both models' absolute
+accuracy. It was omitted to keep the input identical across architectures, at a known cost in
+absolute performance.
+
+\keypoint{Label noise.} As the error analysis shows, a meaningful proportion of test documents
+admit more than one defensible label. This places a ceiling on measurable accuracy and compresses
+the range within which architectures can be distinguished --- which, it should be acknowledged,
+makes an equivalence finding easier to obtain. A task with cleaner labels and longer documents
+would be a more discriminating test.

@@ -1,0 +1,219 @@
+\chapter{Verification of the Hand-Written Layers}
+\label{ch:verification}
+
+\section{Why verification is methodologically necessary}
+
+This chapter is placed before the results, rather than in an appendix, because its content is a
+precondition for those results meaning anything.
+
+The argument is as follows. Consider a hand-written LSTM cell in which the input and forget gates
+have been transposed --- a single-character error in the order of a tuple unpacking. The resulting
+model is not broken in any observable sense. It compiles, it trains, its loss decreases, and it
+reports a test accuracy perhaps two or three points below what a correct implementation would
+achieve. Nothing in the output distinguishes it from a correct implementation of a slightly weaker
+architecture.
+
+Now consider the purpose of this report: to compare two architectures and to interpret the
+resulting difference. A three-point degradation introduced by an implementation defect in one of
+the two models is of precisely the magnitude that would be reported, in good faith, as an
+architectural finding. The experiment would produce a confident, well-presented and entirely
+spurious conclusion.
+
+\keypoint{The characteristic failure mode of from-scratch numerical code is silent degradation,
+not an observable error.} Testing is therefore not a matter of engineering hygiene here; it is
+what licenses the inferences in Chapter~\ref{ch:results}.
+
+Nine checks are specified below. All are executed on every run of the notebook, before any training
+occurs, and the suite raises an assertion on failure rather than emitting a warning, so that it is
+not possible to obtain results from an unverified implementation.
+
+\section{The reference implementations}
+
+Two library primitives are used in this chapter and nowhere else in the project:
+\code{nn.LSTM} and \code{F.layer\us{}norm}. Their use here is legitimate, and indeed necessary: the
+strongest available evidence that a hand-written layer is correct is that it agrees numerically
+with an independent, widely-tested implementation of the same mathematics.
+
+The distinction being drawn is between \emph{using} a primitive to build a model --- which the
+from-scratch constraint forbids --- and \emph{comparing against} one to verify a model, which is
+the only rigorous way to discharge that constraint.
+
+\section{Checks 1--2: equivalence against reference implementations}
+
+\subsection{Check 1 --- the LSTM cell}
+
+This is the strongest check in the suite. Rather than testing that the hand-written cell behaves
+\emph{similarly} to a reference, it tests that it is \emph{identical} given identical parameters.
+
+The procedure copies the reference implementation's input-projection matrix, its hidden-projection
+matrix, and the \emph{sum} of its two bias vectors into the hand-written cell, then runs both over
+the same random input sequence and compares every timestep.
+
+{\small
+\begin{verbatim}
+ref_lstm = nn.LSTM(D, H, num_layers=1, batch_first=True)   # reference only
+ours = LSTMLayerScratch(D, H, reverse=False)
+with torch.no_grad():
+    ours.cell.W.weight.copy_(ref_lstm.weight_ih_l0)
+    ours.cell.W.bias.copy_(ref_lstm.bias_ih_l0 + ref_lstm.bias_hh_l0)
+    ours.cell.U.weight.copy_(ref_lstm.weight_hh_l0)
+ref_out, (ref_h, _) = ref_lstm(x)
+our_out, our_h = ours(x, full_mask)
+\end{verbatim}}
+
+Observed maximum absolute deviation: $5.96\times10^{-8}$ across all timestep outputs and
+$4.47\times10^{-8}$ on the final hidden state. Both are at the level of single-precision rounding.
+
+This result simultaneously confirms the gate algebra of
+Equations~\ref{eq:lstm_i}--\ref{eq:lstm_h}, the gate \emph{ordering} convention, the handling of
+the fused bias, and the correctness of the unrolled recurrence. A transposition of any two gates
+would produce a deviation of order unity.
+
+\subsection{Check 2 --- layer normalisation}
+
+The hand-written normalisation is compared against \code{F.layer\us{}norm} with the same learned
+parameters and a deliberately non-trivial input distribution (mean 1.5, standard deviation 3.0), so
+that an error in either centring or scaling would be visible.
+
+Observed maximum absolute deviation: $4.77\times10^{-7}$. This confirms in particular the use of
+the biased variance estimator; substituting the unbiased estimator produces a deviation several
+orders of magnitude larger.
+
+\section{Check 3: attention against an independent formulation}
+
+The head split and merge is the most error-prone part of a multi-head attention implementation,
+because the reshaping operations are compact and their failure mode is a silent permutation of
+features rather than an exception.
+
+A naive reference is therefore computed, which processes one \emph{(batch, head)} pair at a time
+and slices head columns explicitly:
+
+{\small
+\begin{verbatim}
+for b in range(x.size(0)):
+    head_outputs = []
+    for h in range(n_heads):
+        sl = slice(h * d_k, (h + 1) * d_k)
+        qh, kh, vh = q_all[b, :, sl], k_all[b, :, sl], v_all[b, :, sl]
+        s = (qh @ kh.T) / math.sqrt(d_k)
+        s = s.masked_fill(~km[b].unsqueeze(0), -1e9)
+        head_outputs.append(torch.softmax(s, dim=-1) @ vh)
+    naive[b] = mha.W_o(torch.cat(head_outputs, dim=-1))
+\end{verbatim}}
+
+\keypoint{Why the reference is formulated this way.} The property under test is that
+\code{view(B,T,h,d\us{}k).transpose(1,2)} corresponds to contiguous column blocks of the projection.
+A reference written with \code{einsum} would be more elegant, but it would share the very
+assumption being tested and would therefore prove nothing. Explicit column slicing with a Python
+loop is deliberately the least clever formulation available, and that is its merit: it has no
+assumptions in common with the implementation.
+
+Observed maximum absolute deviation: $8.94\times10^{-8}$.
+
+\section{Checks 4--5: mathematical invariants}
+
+Checks 1--3 compare against an alternative implementation. Checks 4--5 instead assert properties
+that any correct implementation must satisfy, independent of how it is written.
+
+\keypoint{Check 4 --- attention rows sum to one.} Each row of the attention matrix is a probability
+distribution over positions. Observed maximum deviation from unity: $1.79\times10^{-7}$. This would
+fail immediately if the softmax were applied over the wrong axis --- an error that is otherwise
+hard to detect, since the result remains dimensionally valid and the model still trains.
+
+\keypoint{Check 5 --- padded keys receive no attention mass.} The maximum attention weight assigned
+to any padded key, over all queries and heads, is $0.00\times10^{0}$ --- exactly zero in floating
+point, as the masked logits underflow the softmax completely. This confirms the mask reaches the
+scores correctly and is broadcast over the intended axes.
+
+\section{Checks 6--7: padding invariance}
+\label{sec:padinv}
+
+These are the decisive checks of the suite, and they test the masking arguments made in
+Section~\ref{sec:masking} and in Chapter~\ref{ch:implementation}.
+
+\keypoint{The property.} Appending additional padding tokens to a batch must not change either
+model's output. Padding is an artefact of batching and carries no information; if logits move when
+padding is added, the model is reading the artefact.
+
+The test constructs a batch with mixed true lengths, appends twenty further padding positions, and
+compares logits:
+
+{\small
+\begin{verbatim}
+short_ids = torch.randint(2, 500, (6, 12))
+short_ids[0, 8:] = PAD_ID          # mixed real lengths within the batch
+short_ids[3, 5:] = PAD_ID
+padded_ids = torch.cat([short_ids, torch.full((6, 20), PAD_ID)], dim=1)
+d = (model(short_ids) - model(padded_ids)).abs().max()
+\end{verbatim}}
+
+Observed deviations: $0.00\times10^{0}$ for the recurrent model --- exact, as the masked update is
+an algebraic identity --- and $1.19\times10^{-7}$ for the Transformer, at the level of
+floating-point reassociation.
+
+\keypoint{Why these checks carry the most weight.} The two masking defects described in
+Chapter~\ref{ch:implementation} --- unmasked state updates and a backward pass beginning at the
+wrong position --- produce no error, no warning and no visible symptom. They degrade accuracy by an
+amount that varies with the padding distribution of the batch, which is to say, invisibly. Padding
+invariance is the only practical means of detecting them, and the exact-zero result for the
+recurrent model confirms that the argument given in Chapter~\ref{ch:implementation} --- that
+reverse iteration under masking is equivalent to starting at each sequence's true endpoint --- is
+sound in implementation as well as in principle.
+
+\section{Checks 8--9: gradient viability}
+
+The preceding checks all test the forward computation. A model may have a perfectly correct forward
+pass and still fail to learn, if gradients do not reach its parameters.
+
+Checks 8 and 9 take a 200-example subset and train each model on it for 30 optimisation steps,
+requiring training accuracy above 95\%. A model with a severed gradient path, a detached tensor or
+a vanishing initialisation cannot satisfy this.
+
+Both models reach \textbf{100\%} training accuracy within the step budget.
+
+This check also serves a secondary purpose: a model that cannot overfit 200 examples has
+insufficient capacity or an optimisation problem, either of which would need to be resolved before
+any comparison of generalisation is meaningful.
+
+\section{Results}
+
+\begin{table}[ht]
+\centering
+\caption[Verification results]{Results of the nine verification checks. All pass. Tolerances are
+$10^{-5}$ for equivalence checks, $10^{-6}$ for layer normalisation and $10^{-4}$ for padding
+invariance.}
+\label{tab:verification}
+\begin{tabular}{clll}
+\toprule
+\textbf{\#} & \textbf{Check} & \textbf{Measured} & \textbf{Result} \\
+\midrule
+1 & LSTM cell vs.\ reference            & $5.96\times10^{-8}$ & pass \\
+2 & Layer norm vs.\ reference           & $4.77\times10^{-7}$ & pass \\
+3 & Attention vs.\ naive per-head loop  & $8.94\times10^{-8}$ & pass \\
+4 & Attention rows sum to one           & $1.79\times10^{-7}$ & pass \\
+5 & Padded keys receive zero mass       & $0.00\times10^{0}$  & pass \\
+6 & BiLSTM padding invariance           & $0.00\times10^{0}$  & pass \\
+7 & Transformer padding invariance      & $1.19\times10^{-7}$ & pass \\
+8 & BiLSTM overfits 200 examples        & 100\% / 30 steps    & pass \\
+9 & Transformer overfits 200 examples   & 100\% / 30 steps    & pass \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All nine checks pass. The implementations are therefore numerically faithful to the mathematics of
+Chapter~\ref{ch:theory}, and the experimental results that follow can be attributed to the
+architectures rather than to implementation defects.
+
+\section{What this suite does not establish}
+
+Intellectual honesty requires stating the limits of the verification.
+
+The suite establishes that the implemented layers compute the intended functions. It does
+\emph{not} establish that the surrounding experimental pipeline is free of error: a defect in the
+data splitting, the label mapping or the metric computation would not be detected by any of these
+nine checks. Nor does it establish that the chosen architectures are well suited to the task, which
+is an empirical question answered in Chapter~\ref{ch:results}.
+
+The balanced-accuracy sanity check --- both models landing in the 90--92\% band predicted by the
+literature survey in Table~\ref{tab:prior} --- provides weak additional evidence that the pipeline
+as a whole is sound, but it is corroboration rather than proof.

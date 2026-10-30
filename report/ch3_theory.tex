@@ -1,0 +1,365 @@
+\chapter{Theoretical Background}
+\label{ch:theory}
+
+This chapter develops the mathematics of the two architectures. The treatment is deliberately
+explicit, because the implementations in Chapter~\ref{ch:implementation} follow these equations
+term by term, and the verification in Chapter~\ref{ch:verification} checks them numerically.
+
+\section{Problem formalisation}
+
+Let $\mathcal{V}$ be a finite vocabulary and let a document be a sequence of tokens
+$x = (x_1, x_2, \dots, x_n)$ with $x_t \in \mathcal{V}$. Let $\mathcal{C} = \{1, \dots, K\}$ be a
+set of $K$ class labels; here $K = 4$.
+
+The task is to learn a function $f_\theta : \mathcal{V}^{*} \rightarrow \Delta^{K-1}$, mapping a
+token sequence of arbitrary length to a probability distribution over the $K$ classes, where
+$\Delta^{K-1}$ denotes the probability simplex. Given a labelled training set
+$\mathcal{D} = \{(x^{(i)}, y^{(i)})\}_{i=1}^{N}$, the parameters $\theta$ are chosen to minimise
+the categorical cross-entropy
+\begin{equation}
+\mathcal{L}(\theta) = -\frac{1}{N} \sum_{i=1}^{N} \log f_\theta(x^{(i)})_{y^{(i)}} .
+\label{eq:xent}
+\end{equation}
+
+Both architectures studied here share a common three-stage structure:
+\begin{enumerate}
+\item an \textbf{embedding} stage mapping tokens to dense vectors,
+\item a \textbf{contextualisation} stage producing position-wise representations that depend on the
+      rest of the sequence --- this is the stage in which the two architectures differ,
+\item a \textbf{pooling and classification} stage reducing the variable-length sequence of
+      representations to a single vector and projecting it to $K$ logits.
+\end{enumerate}
+
+Holding stages 1 and 3 as similar as possible while varying stage 2 is precisely the experimental
+design described in Chapter~\ref{ch:method}.
+
+\section{Embedding}
+
+An embedding matrix $E \in \mathbb{R}^{|\mathcal{V}| \times d}$ maps each token index to a row
+vector. For a sequence $x$ of length $n$ this yields
+\begin{equation}
+X = \big(E_{x_1}, E_{x_2}, \dots, E_{x_n}\big)^{\!\top} \in \mathbb{R}^{n \times d}.
+\end{equation}
+In this study $E$ is randomly initialised and learned jointly with the rest of the model; no
+pretrained vectors are used. A designated padding index is held at the zero vector and excluded
+from gradient updates.
+
+\section{Recurrent networks and the vanishing gradient problem}
+\label{sec:vanishing}
+
+\subsection{The simple recurrent formulation}
+
+A simple recurrent network maintains a hidden state updated at each timestep:
+\begin{equation}
+h_t = \phi\big(W x_t + U h_{t-1} + b\big), \qquad h_0 = \mathbf{0},
+\label{eq:rnn}
+\end{equation}
+where $\phi$ is a saturating nonlinearity, typically $\tanh$.
+
+\subsection{Backpropagation through time}
+
+Training requires the gradient of a loss $\mathcal{L}$ defined at the final timestep with respect
+to parameters that are shared across all timesteps. Applying the chain rule across the unrolled
+computation gives
+\begin{equation}
+\frac{\partial \mathcal{L}}{\partial h_k}
+  = \frac{\partial \mathcal{L}}{\partial h_n}
+    \prod_{t=k+1}^{n} \frac{\partial h_t}{\partial h_{t-1}} .
+\label{eq:bptt}
+\end{equation}
+From Equation~\ref{eq:rnn}, each Jacobian factor is
+\begin{equation}
+\frac{\partial h_t}{\partial h_{t-1}}
+  = U^{\!\top} \operatorname{diag}\!\big(\phi'(a_t)\big),
+  \qquad a_t = W x_t + U h_{t-1} + b .
+\end{equation}
+
+\subsection{The pathology}
+
+Taking norms in Equation~\ref{eq:bptt} and writing $\gamma = \sup_z |\phi'(z)|$ --- which equals
+$1$ for $\tanh$ and $\tfrac{1}{4}$ for the logistic sigmoid --- gives the bound
+\begin{equation}
+\left\| \frac{\partial h_t}{\partial h_{t-1}} \right\| \;\le\; \gamma \, \|U\| ,
+\qquad\text{hence}\qquad
+\left\| \prod_{t=k+1}^{n} \frac{\partial h_t}{\partial h_{t-1}} \right\|
+  \;\le\; \big(\gamma \|U\|\big)^{\,n-k} .
+\label{eq:vanish}
+\end{equation}
+
+The product is geometric in the distance $n-k$. If $\gamma\|U\| < 1$ the gradient decays
+exponentially and the network cannot assign credit across long spans --- the \emph{vanishing
+gradient} problem. If $\gamma\|U\| > 1$ it grows exponentially --- the \emph{exploding gradient}
+problem, which is the more tractable of the two and is routinely handled by gradient-norm
+clipping, as is done in this study.
+
+Vanishing gradients cannot be addressed by clipping, because the information is destroyed rather
+than merely rescaled. The resolution requires an architectural change.
+
+\section{Long Short-Term Memory}
+
+\subsection{Gating equations}
+
+LSTM introduces a cell state $c_t$ alongside the hidden state $h_t$, together with three gates. At
+each timestep:
+\begin{align}
+i_t &= \sigma\!\left(W_i x_t + U_i h_{t-1} + b_i\right) && \text{input gate} \label{eq:lstm_i}\\
+f_t &= \sigma\!\left(W_f x_t + U_f h_{t-1} + b_f\right) && \text{forget gate} \label{eq:lstm_f}\\
+g_t &= \tanh\!\left(W_g x_t + U_g h_{t-1} + b_g\right) && \text{candidate cell} \label{eq:lstm_g}\\
+o_t &= \sigma\!\left(W_o x_t + U_o h_{t-1} + b_o\right) && \text{output gate} \label{eq:lstm_o}\\
+c_t &= f_t \odot c_{t-1} + i_t \odot g_t && \text{cell update} \label{eq:lstm_c}\\
+h_t &= o_t \odot \tanh(c_t) && \text{hidden output} \label{eq:lstm_h}
+\end{align}
+where $\sigma$ is the logistic sigmoid and $\odot$ denotes elementwise multiplication.
+
+Interpretively: the forget gate $f_t$ decides what proportion of the existing cell contents to
+retain; the input gate $i_t$ decides how much of the new candidate $g_t$ to admit; and the output
+gate $o_t$ decides how much of the resulting cell state to expose as the hidden output.
+
+\subsection{Why this solves the gradient problem}
+
+Consider the derivative of the cell state with respect to its own previous value. Differentiating
+Equation~\ref{eq:lstm_c}, and noting that $f_t$, $i_t$ and $g_t$ all depend on $h_{t-1}$ rather
+than on $c_{t-1}$ directly, the dominant term is
+\begin{equation}
+\frac{\partial c_t}{\partial c_{t-1}} \;=\; \operatorname{diag}(f_t) \;+\; (\text{terms via } h_{t-1}).
+\label{eq:lstm_grad}
+\end{equation}
+
+The leading term is multiplication by the forget gate, with \emph{no weight matrix and no
+saturating nonlinearity in the path}. When $f_t \approx \mathbf{1}$, the gradient flows backwards
+across that timestep essentially unchanged. Over $n-k$ steps the decay is governed by
+$\prod_t f_t$ rather than by $(\gamma\|U\|)^{n-k}$, and since the forget gate is learned, the
+network can \emph{choose} to keep this path open for exactly those features requiring long-range
+credit assignment. This is the constant error carousel of the original formulation
+\cite{hochreiter1997}, and it is the entire reason LSTM works.
+
+\subsection{Fused gate computation}
+
+Equations~\ref{eq:lstm_i}--\ref{eq:lstm_o} share the same two inputs, $x_t$ and $h_{t-1}$. In
+implementation the four gate pre-activations are therefore computed in a single pair of matrix
+products,
+\begin{equation}
+\begin{bmatrix} a_i \\ a_f \\ a_g \\ a_o \end{bmatrix}
+  = \underbrace{W x_t}_{\in \mathbb{R}^{4d_h}} + \underbrace{U h_{t-1}}_{\in \mathbb{R}^{4d_h}} + b,
+\end{equation}
+with $W \in \mathbb{R}^{4d_h \times d}$ and $U \in \mathbb{R}^{4d_h \times d_h}$, after which the
+result is split into four equal blocks. This is a pure efficiency transformation --- it is
+mathematically identical to the separate form --- but it is the form used in the implementation,
+and the \emph{ordering} of the four blocks is a convention that must match the reference
+implementation for the verification in Chapter~\ref{ch:verification} to be meaningful.
+
+\subsection{Parameter count}
+
+An LSTM layer with input dimension $d$ and hidden dimension $d_h$ has
+\begin{equation}
+P_{\text{LSTM}} = 4\big(d\,d_h + d_h^2 + d_h\big)
+\end{equation}
+parameters. A bidirectional layer doubles this.
+
+\section{Bidirectional recurrence}
+
+A bidirectional layer runs two independent recurrences,
+\begin{equation}
+\overrightarrow{h}_t = \text{LSTM}^{\rightarrow}(x_t, \overrightarrow{h}_{t-1}), \qquad
+\overleftarrow{h}_t  = \text{LSTM}^{\leftarrow}(x_t, \overleftarrow{h}_{t+1}),
+\end{equation}
+and concatenates them, $h_t = [\overrightarrow{h}_t ; \overleftarrow{h}_t] \in \mathbb{R}^{2d_h}$.
+Each position is thereby contextualised by the whole sequence rather than only its prefix.
+
+\section{Pooling}
+\label{sec:pooling}
+
+Classification requires reducing $(h_1,\dots,h_n)$ to a single vector. Three strategies are
+standard.
+
+\keypoint{Last state.} Use $h_n$. For a unidirectional recurrent model this is the natural
+summary, but it is sensitive to the final token and discards earlier evidence except insofar as the
+state retained it.
+
+\keypoint{Mean pooling.} Use $\frac{1}{n}\sum_t h_t$. This weights all positions equally and is
+robust, but for a recurrent model it discards the privileged endpoint that the recurrence was
+constructed to produce.
+
+\keypoint{Concatenation.} Use $\big[\tfrac{1}{n}\sum_t h_t \,;\, \overrightarrow{h}_n \,;\,
+\overleftarrow{h}_1\big]$, combining both. This is the strategy adopted here, on the reasoning that
+the two summaries carry complementary information and documents of 39 tokens are short enough that
+the endpoint alone is noisy.
+
+With padded batches, all pooling operations must be masked --- a point of considerable practical
+importance developed in Section~\ref{sec:masking}.
+
+\section{Attention}
+
+\subsection{Scaled dot-product attention}
+
+Given queries $Q \in \mathbb{R}^{n \times d_k}$, keys $K \in \mathbb{R}^{m \times d_k}$ and values
+$V \in \mathbb{R}^{m \times d_v}$, scaled dot-product attention is
+\begin{equation}
+\operatorname{Attention}(Q,K,V)
+  = \operatorname{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}}\right) V .
+\label{eq:attention}
+\end{equation}
+
+The matrix $QK^{\top} \in \mathbb{R}^{n\times m}$ contains a compatibility score for every
+query--key pair. The row-wise softmax converts each row into a probability distribution over the
+$m$ positions, and the product with $V$ forms, for each query, a convex combination of value
+vectors.
+
+In \emph{self}-attention, $Q$, $K$ and $V$ are all linear projections of the same input sequence,
+so $n = m$ and every position attends to every position including itself.
+
+\subsection{Why the $\sqrt{d_k}$ scaling is necessary}
+
+The scaling factor is not cosmetic. Suppose the components of $q$ and $k$ are independent with zero
+mean and unit variance. Then
+\begin{equation}
+\operatorname{E}\!\left[q \cdot k\right] = 0,
+\qquad
+\operatorname{Var}\!\left[q \cdot k\right]
+  = \operatorname{Var}\!\left[\sum_{j=1}^{d_k} q_j k_j\right] = d_k .
+\end{equation}
+
+The dot products therefore have standard deviation $\sqrt{d_k}$, growing with the head dimension.
+For large $d_k$ the softmax receives inputs of large magnitude and saturates: its output approaches
+a one-hot vector, and its Jacobian approaches zero. Writing $p = \operatorname{softmax}(s)$, the
+Jacobian is
+\begin{equation}
+\frac{\partial p_i}{\partial s_j} = p_i\big(\delta_{ij} - p_j\big),
+\end{equation}
+which vanishes as any $p_i \to 1$. Dividing by $\sqrt{d_k}$ restores unit variance to the scores
+and keeps the softmax in its responsive region, preserving gradient flow.
+
+\subsection{Multi-head attention}
+
+A single attention operation produces one weighted average per position, which constrains the model
+to one relational pattern per layer. Multi-head attention runs $h$ attention operations in
+parallel on different learned projections:
+\begin{align}
+\operatorname{head}_j &= \operatorname{Attention}\!\left(XW_j^{Q},\, XW_j^{K},\, XW_j^{V}\right), \\
+\operatorname{MHA}(X) &= \left[\operatorname{head}_1 ; \dots ; \operatorname{head}_h\right] W^{O} .
+\label{eq:mha}
+\end{align}
+With $d_k = d_v = d_{\text{model}}/h$, total computation is approximately that of a single head at
+full dimension, but the model can attend to several distinct relational patterns simultaneously.
+
+In implementation the per-head projections are not separate matrices. A single projection of width
+$d_{\text{model}}$ is computed and then \emph{reshaped} into $h$ blocks of width $d_k$. This
+reshape is the single most error-prone step in implementing attention, and it is the specific
+target of verification check~3 in Chapter~\ref{ch:verification}.
+
+\subsection{Masking}
+\label{sec:masking}
+
+Batched processing requires padding sequences to a common length. Padded positions must not
+influence the result. In attention this is enforced by adding a mask to the scores before the
+softmax:
+\begin{equation}
+s'_{ij} = \begin{cases}
+s_{ij} & \text{if position } j \text{ is a real token} \\
+-\infty & \text{if position } j \text{ is padding,}
+\end{cases}
+\end{equation}
+so that $\operatorname{softmax}(s')$ assigns exactly zero weight to padded keys.
+
+In practice $-\infty$ is replaced by a large finite negative constant. The reason is numerical: if
+an entire row were masked, $\operatorname{softmax}$ of a vector of $-\infty$ evaluates to
+$0/0 = \text{NaN}$, which propagates through the network and destroys the gradients. A large
+finite constant yields a harmless uniform distribution in that degenerate case.
+
+\section{Positional encoding}
+
+Self-attention as defined in Equation~\ref{eq:attention} is permutation-equivariant: permuting the
+input rows permutes the output rows identically, with no other change. A model built from
+self-attention alone therefore cannot distinguish word order at all --- it would be a bag-of-words
+model with a sophisticated weighting scheme.
+
+Position must consequently be injected explicitly. The sinusoidal scheme of
+Vaswani et al.\ \cite{vaswani2017} defines
+\begin{align}
+PE_{(\text{pos},\,2i)}   &= \sin\!\left(\frac{\text{pos}}{10000^{2i/d_{\text{model}}}}\right), \\
+PE_{(\text{pos},\,2i+1)} &= \cos\!\left(\frac{\text{pos}}{10000^{2i/d_{\text{model}}}}\right),
+\end{align}
+and adds $PE$ to the token embeddings. Each dimension is a sinusoid of a different wavelength,
+forming a geometric progression from $2\pi$ to $10000\cdot 2\pi$. The scheme has two useful
+properties: it requires no parameters, and because $PE_{\text{pos}+k}$ is a fixed linear function
+of $PE_{\text{pos}}$ for any fixed offset $k$, relative position is linearly recoverable.
+
+Token embeddings are scaled by $\sqrt{d_{\text{model}}}$ before the positional signal is added, so
+that the two contributions are of comparable magnitude at initialisation.
+
+\section{Layer normalisation}
+
+Layer normalisation \cite{ba2016} standardises each position's feature vector independently:
+\begin{equation}
+\operatorname{LN}(x) = \gamma \odot \frac{x - \mu}{\sqrt{\varsigma^2 + \epsilon}} + \beta,
+\qquad
+\mu = \frac{1}{d}\sum_{j=1}^{d} x_j,
+\qquad
+\varsigma^2 = \frac{1}{d}\sum_{j=1}^{d} (x_j - \mu)^2 ,
+\end{equation}
+with learned $\gamma, \beta \in \mathbb{R}^{d}$ and a small $\epsilon$ for numerical stability.
+
+Unlike batch normalisation, the statistics are computed over the feature dimension of a single
+example, so the operation is independent of batch composition and of sequence length. Note that
+$\varsigma^2$ is the \emph{biased} variance, normalising by $d$ rather than $d-1$; this detail
+matters for the numerical agreement verified in Chapter~\ref{ch:verification}.
+
+\section{Residual connections and block ordering}
+
+Each sublayer is wrapped in a residual connection, which provides an identity path for gradients.
+Two orderings are in use:
+\begin{align}
+\text{post-norm:}\quad & x \leftarrow \operatorname{LN}\!\big(x + \operatorname{Sublayer}(x)\big), \\
+\text{pre-norm:}\quad  & x \leftarrow x + \operatorname{Sublayer}\!\big(\operatorname{LN}(x)\big).
+\end{align}
+
+In the post-norm arrangement the residual path passes through a normalisation at every layer, and
+at initialisation the expected gradient magnitude scales unfavourably with depth, which in practice
+necessitates a learning-rate warmup schedule. In the pre-norm arrangement the residual path is
+unobstructed from input to output, gradients are better conditioned at initialisation, and warmup
+becomes unnecessary \cite{xiong2020}. The present study uses pre-norm, since the training budget
+is a small number of epochs and a warmup schedule would consume a meaningful fraction of it.
+
+The complete encoder block is
+\begin{align}
+x &\leftarrow x + \operatorname{Dropout}\big(\operatorname{MHA}(\operatorname{LN}(x))\big), \\
+x &\leftarrow x + \operatorname{Dropout}\big(W_2\,\operatorname{GELU}(W_1 \operatorname{LN}(x))\big).
+\end{align}
+
+\section{Complexity analysis}
+
+Table~\ref{tab:complexity} summarises the structural comparison, following the analysis of
+Vaswani et al.\ \cite{vaswani2017}. Let $n$ be sequence length and $d$ the representation
+dimension.
+
+\begin{table}[ht]
+\centering
+\caption[Complexity comparison of recurrent and self-attentive layers]{Per-layer complexity,
+sequential depth and maximum path length. \emph{Sequential operations} counts steps that cannot be
+parallelised; \emph{maximum path length} is the number of computational steps separating the two
+most distant positions.}
+\label{tab:complexity}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Layer type} & \textbf{Complexity per layer} & \textbf{Sequential operations} & \textbf{Max path length} \\
+\midrule
+Recurrent (LSTM)    & $O(n \cdot d^2)$ & $O(n)$ & $O(n)$ \\
+Self-attention      & $O(n^2 \cdot d)$ & $O(1)$ & $O(1)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three consequences follow, and all three are tested empirically in Chapter~\ref{ch:results}.
+
+\keypoint{Path length.} Self-attention connects any two positions in one step; recurrence requires
+$O(n)$ steps. This is the basis of the Transformer's advantage on long-range dependency. Its
+practical value is proportional to how much long-range structure the task actually contains.
+
+\keypoint{Parallelism.} Recurrence requires $O(n)$ strictly sequential steps; self-attention
+requires $O(1)$. On parallel hardware this is a decisive advantage in wall-clock terms.
+
+\keypoint{Arithmetic.} The comparison between $O(n d^2)$ and $O(n^2 d)$ depends on the ratio
+$n/d$. Self-attention performs \emph{less} total arithmetic only when $n < d$. With $n = 64$ and
+$d = 128$, as in this study, the two are of the same order, and neither dominates. This observation
+is central to the cost result reported in Section~\ref{sec:cost}, and it is why that result does
+not contradict the theory.

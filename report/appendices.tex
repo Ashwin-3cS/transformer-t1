@@ -1,0 +1,345 @@
+\appendix
+
+\chapter{Reproduction}
+\label{app:repro}
+
+Every number in this report is produced by executing the notebook
+\code{ag\us{}news\us{}rnn\us{}vs\us{}transformer.ipynb} end to end. The repository is at
+\url{https://github.com/Ashwin-3cS/transformer-t1}.
+
+\section{Environment}
+
+{\small
+\begin{verbatim}
+uv venv .venv --python 3.14
+uv pip install --python .venv/bin/python torch \
+    --index-url https://download.pytorch.org/whl/cpu
+uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python -m ipykernel install --user --name laksh-agnews \
+    --display-name "AG News (scratch models)"
+\end{verbatim}}
+
+\section{Data access}
+
+The corpus is downloaded through the Kaggle API on first run and cached in \code{data/agnews/}.
+The newer Kaggle token format is used:
+
+{\small
+\begin{verbatim}
+mkdir -p ~/.kaggle
+echo KGAT_xxxxxxxx > ~/.kaggle/access_token
+chmod 600 ~/.kaggle/access_token
+\end{verbatim}}
+
+A legacy \code{~/.kaggle/kaggle.json} credential file is also accepted. If neither is present the
+notebook raises an explanatory error rather than failing with an opaque HTTP status.
+
+\section{Execution}
+
+{\small
+\begin{verbatim}
+MPLBACKEND=Agg .venv/bin/jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=7200 ag_news_rnn_vs_transformer.ipynb
+\end{verbatim}}
+
+Total runtime on the reference hardware is approximately nine minutes: 126\,s of recurrent model
+training, 353\,s of Transformer training, plus data acquisition, encoding and evaluation.
+
+Setting \code{SMOKE\us{}TEST = True} in the configuration cell reduces the experiment to 2{,}000
+records and one epoch, allowing the whole notebook to execute in about a minute. This is
+recommended before committing to a full run.
+
+\section{Outputs}
+
+Execution writes to \code{artifacts/}: \code{metrics.json} containing every reported figure in
+machine-readable form, both model checkpoints, and the four figures reproduced in this report.
+
+\section{Determinism}
+
+All random number generators are seeded at 42. The experiment was executed twice during
+preparation of this report. Accuracy, macro-$F_1$, weighted $F_1$,
+per-class $F_1$, parameter counts and the complete McNemar contingency table were
+identical between runs. Only wall-clock timings varied, as expected.
+
+\chapter{Complete Classification Reports}
+\label{app:reports}
+
+Generated on the 7{,}600-document test set. Support is 1{,}900 for every class.
+
+\section{Model A --- bidirectional LSTM}
+
+{\small
+\begin{verbatim}
+              precision    recall  f1-score   support
+
+       World     0.9366    0.8789    0.9069      1900
+      Sports     0.9459    0.9853    0.9652      1900
+    Business     0.8850    0.8705    0.8777      1900
+    Sci/Tech     0.8791    0.9111    0.8948      1900
+
+    accuracy                         0.9114      7600
+   macro avg     0.9117    0.9114    0.9111      7600
+weighted avg     0.9117    0.9114    0.9111      7600
+\end{verbatim}}
+
+\section{Model B --- Transformer encoder}
+
+{\small
+\begin{verbatim}
+              precision    recall  f1-score   support
+
+       World     0.9227    0.9053    0.9139      1900
+      Sports     0.9553    0.9674    0.9613      1900
+    Business     0.8889    0.8674    0.8780      1900
+    Sci/Tech     0.8754    0.9021    0.8885      1900
+
+    accuracy                         0.9105      7600
+   macro avg     0.9106    0.9105    0.9104      7600
+weighted avg     0.9106    0.9105    0.9104      7600
+\end{verbatim}}
+
+\section{Confusion matrices, absolute counts}
+
+\begin{table}[ht]
+\centering
+\caption{Confusion matrix, bidirectional LSTM. Rows are true classes.}
+\begin{tabular}{lrrrr}
+\toprule
+ & \textbf{World} & \textbf{Sports} & \textbf{Business} & \textbf{Sci/Tech} \\
+\midrule
+World    & 1670 & 71   & 103  & 56 \\
+Sports   & 9    & 1872 & 11   & 8 \\
+Business & 58   & 14   & 1654 & 174 \\
+Sci/Tech & 46   & 22   & 101  & 1731 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Confusion matrix, Transformer encoder. Rows are true classes.}
+\begin{tabular}{lrrrr}
+\toprule
+ & \textbf{World} & \textbf{Sports} & \textbf{Business} & \textbf{Sci/Tech} \\
+\midrule
+World    & 1720 & 49   & 77   & 54 \\
+Sports   & 27   & 1838 & 28   & 7 \\
+Business & 55   & 14   & 1648 & 183 \\
+Sci/Tech & 62   & 23   & 101  & 1714 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\chapter{Source Listings}
+\label{app:source}
+
+Complete listings of the from-scratch components. The training harness, preprocessing pipeline and
+evaluation code are in the notebook and are omitted here for brevity.
+
+\section{Transformer encoder, complete}
+
+{\small
+\begin{verbatim}
+def sinusoidal_positional_encoding(max_len, d_model):
+    position = torch.arange(max_len, dtype=torch.float32).unsqueeze(1)
+    even_i   = torch.arange(0, d_model, 2, dtype=torch.float32)
+    div_term = torch.exp(-math.log(10000.0) * even_i / d_model)
+    pe = torch.zeros(max_len, d_model)
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)[:, : pe[:, 1::2].shape[1]]
+    return pe
+
+
+class LayerNormScratch(nn.Module):
+    def __init__(self, d_model, eps=1e-5):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(d_model))
+        self.beta  = nn.Parameter(torch.zeros(d_model))
+        self.eps = eps
+
+    def forward(self, x):
+        mu  = x.mean(dim=-1, keepdim=True)
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
+        return self.gamma * (x - mu) / torch.sqrt(var + self.eps) + self.beta
+
+
+class MultiHeadSelfAttentionScratch(nn.Module):
+    def __init__(self, d_model, n_heads, dropout=0.0):
+        super().__init__()
+        assert d_model % n_heads == 0
+        self.n_heads, self.d_k = n_heads, d_model // n_heads
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def _split_heads(self, t):
+        B, T, _ = t.shape
+        return t.view(B, T, self.n_heads, self.d_k).transpose(1, 2)
+
+    def forward(self, x, key_mask=None, return_attention=False):
+        B, T, _ = x.shape
+        q = self._split_heads(self.W_q(x))
+        k = self._split_heads(self.W_k(x))
+        v = self._split_heads(self.W_v(x))
+
+        scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        if key_mask is not None:
+            scores = scores.masked_fill(key_mask[:, None, None, :] == 0, -1e9)
+
+        attention = torch.softmax(scores, dim=-1)
+        context = self.dropout(attention) @ v
+        context = context.transpose(1, 2).reshape(B, T, self.n_heads * self.d_k)
+        out = self.W_o(context)
+        return (out, attention) if return_attention else out
+
+
+class EncoderBlockScratch(nn.Module):
+    def __init__(self, d_model, n_heads, d_ff, dropout):
+        super().__init__()
+        self.norm1 = LayerNormScratch(d_model)
+        self.attention = MultiHeadSelfAttentionScratch(d_model, n_heads, dropout)
+        self.norm2 = LayerNormScratch(d_model)
+        self.ff_in  = nn.Linear(d_model, d_ff)
+        self.ff_out = nn.Linear(d_ff, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, key_mask=None):
+        x = x + self.dropout(self.attention(self.norm1(x), key_mask))
+        h = self.norm2(x)
+        h = self.ff_out(self.dropout(F.gelu(self.ff_in(h))))
+        return x + self.dropout(h)
+
+
+class TransformerClassifier(nn.Module):
+    def __init__(self, vocab_size, d_model=128, n_heads=4, n_layers=2,
+                 d_ff=256, max_len=64, n_classes=4, dropout=0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=PAD_ID)
+        nn.init.normal_(self.embedding.weight, mean=0.0, std=0.1)
+        with torch.no_grad():
+            self.embedding.weight[PAD_ID].zero_()
+        self.register_buffer("pos_encoding",
+                             sinusoidal_positional_encoding(max_len, d_model))
+        self.dropout = nn.Dropout(dropout)
+        self.blocks = nn.ModuleList(
+            EncoderBlockScratch(d_model, n_heads, d_ff, dropout)
+            for _ in range(n_layers))
+        self.norm_final = LayerNormScratch(d_model)
+        self.classifier = nn.Linear(d_model, n_classes)
+
+    def forward(self, ids, lengths=None):
+        mask = (ids != PAD_ID)
+        T = ids.size(1)
+        x = self.embedding(ids) * math.sqrt(self.d_model) \
+            + self.pos_encoding[:T].unsqueeze(0)
+        x = self.dropout(x)
+        for block in self.blocks:
+            x = block(x, mask)
+        x = self.norm_final(x)
+        m = mask.float().unsqueeze(-1)
+        pooled = (x * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)
+        return self.classifier(self.dropout(pooled))
+\end{verbatim}}
+
+\section{Bidirectional LSTM classifier, complete}
+
+{\small
+\begin{verbatim}
+class BiLSTMClassifier(nn.Module):
+    def __init__(self, vocab_size, emb_dim=128, hidden=128,
+                 n_classes=4, dropout=0.30):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, emb_dim, padding_idx=PAD_ID)
+        nn.init.normal_(self.embedding.weight, mean=0.0, std=0.1)
+        with torch.no_grad():
+            self.embedding.weight[PAD_ID].zero_()
+        self.forward_layer  = LSTMLayerScratch(emb_dim, hidden, reverse=False)
+        self.backward_layer = LSTMLayerScratch(emb_dim, hidden, reverse=True)
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(4 * hidden, n_classes)
+
+    def forward(self, ids, lengths=None):
+        mask = (ids != PAD_ID).float()
+        x = self.embedding(ids)
+        out_f, h_f = self.forward_layer(x, mask)
+        out_b, h_b = self.backward_layer(x, mask)
+        seq = torch.cat([out_f, out_b], dim=-1)
+        denom = mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+        mean_pooled = (seq * mask.unsqueeze(-1)).sum(dim=1) / denom
+        features = torch.cat([mean_pooled, h_f, h_b], dim=-1)
+        return self.classifier(self.dropout(features))
+\end{verbatim}}
+
+\chapter{Verification Suite Output}
+\label{app:verification}
+
+Output produced on every execution, before training begins.
+
+{\small
+\begin{verbatim}
+check                                            result  detail
+-------------------------------------------------------------------------------
+LSTM cell matches nn.LSTM                        PASS    outputs=5.96e-08
+                                                         final h=4.47e-08
+LayerNorm matches F.layer_norm                   PASS    max|diff|=4.77e-07
+Attention matches naive per-head reference       PASS    max|diff|=8.94e-08
+Attention rows sum to 1                          PASS    max|rowsum-1|=1.79e-07
+Padded keys get ~zero attention                  PASS    max mass=0.00e+00
+BiLSTM: logits unchanged by extra padding        PASS    max|diff|=0.00e+00
+Transformer: logits unchanged by extra padding   PASS    max|diff|=1.19e-07
+BiLSTM: overfits 200 examples                    PASS    accuracy=100.0%
+Transformer: overfits 200 examples               PASS    accuracy=100.0%
+-------------------------------------------------------------------------------
+All 9 checks passed. The hand-written layers are numerically correct.
+\end{verbatim}}
+
+\chapter{Summary of Key Figures}
+\label{app:summary}
+
+\begin{table}[ht]
+\centering
+\caption{All headline quantities reported in this study.}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Quantity} & \textbf{BiLSTM} & \textbf{Transformer} \\
+\midrule
+Test accuracy                    & 0.9114 & 0.9105 \\
+Macro $F_1$         & 0.9111 & 0.9104 \\
+Weighted $F_1$      & 0.9111 & 0.9104 \\
+Test cross-entropy               & 0.2797 & 0.2944 \\
+Best validation macro-$F_1$ & 0.9091 & 0.9077 \\
+Best epoch                       & 1 & 3 \\
+Epochs run                       & 3 & 5 \\
+Seconds per epoch                & 41.2 & 68.6 \\
+Total training time (s)          & 126 & 353 \\
+Inference (ms / 1000 docs)       & 138 & 335 \\
+Total parameters                 & 4{,}612{,}612 & 4{,}613{,}124 \\
+Non-embedding parameters         & 265{,}220 & 265{,}732 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Shared experimental quantities.}
+\begin{tabular}{lr}
+\toprule
+\textbf{Quantity} & \textbf{Value} \\
+\midrule
+Training records          & 54{,}000 \\
+Validation records        & 6{,}000 \\
+Test records              & 7{,}600 \\
+Vocabulary size           & 33{,}964 \\
+Maximum sequence length   & 64 \\
+Median document length    & 39 tokens \\
+Coverage at max length    & 96.94\% \\
+Verification checks passed & 9 / 9 \\
+Model agreement           & 94.78\% \\
+Discordant documents      & 367 \\
+McNemar $p$-value         & 0.754 \\
+\bottomrule
+\end{tabular}
+\end{table}

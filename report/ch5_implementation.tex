@@ -1,0 +1,332 @@
+\chapter{Implementation}
+\label{ch:implementation}
+
+\section{The from-scratch constraint}
+
+Both models are implemented from first principles. The precise meaning of that constraint is
+important, and is stated here before the code is presented.
+
+PyTorch is used for three things: multidimensional array arithmetic, reverse-mode automatic
+differentiation, and the optimiser. The modules \code{nn.Linear}, \code{nn.Embedding} and
+\code{nn.Dropout} are used, but only as containers for learnable parameters --- an
+\code{nn.Linear} is an affine map, not a sequence-modelling primitive.
+
+Every operation specific to sequence modelling is written out. Table~\ref{tab:scratch} lists the
+correspondence between the theory of Chapter~\ref{ch:theory} and the implementation.
+
+\begin{table}[ht]
+\centering
+\caption{Components implemented from first principles, with the equations they realise.}
+\label{tab:scratch}
+\begin{tabular}{lll}
+\toprule
+\textbf{Component} & \textbf{Implemented as} & \textbf{Equations} \\
+\midrule
+LSTM gating               & \code{LSTMCellScratch}                & \ref{eq:lstm_i}--\ref{eq:lstm_h} \\
+Recurrence, bidirectional & \code{LSTMLayerScratch}               & Sec.~\ref{sec:vanishing} \\
+Recurrent classifier      & \code{BiLSTMClassifier}               & Sec.~\ref{sec:pooling} \\
+Positional encoding       & \code{sinusoidal\us{}positional\us{}encoding} & Ch.~\ref{ch:theory} \\
+Layer normalisation       & \code{LayerNormScratch}               & Ch.~\ref{ch:theory} \\
+Scaled dot-product attention & \code{MultiHeadSelfAttentionScratch} & \ref{eq:attention} \\
+Multi-head split and merge   & \code{MultiHeadSelfAttentionScratch} & \ref{eq:mha} \\
+Encoder block             & \code{EncoderBlockScratch}            & Ch.~\ref{ch:theory} \\
+Transformer classifier    & \code{TransformerClassifier}          & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The following library primitives are \textbf{not used anywhere in either model}: \code{nn.LSTM},
+\code{nn.GRU}, \code{nn.RNN}, \code{nn.MultiheadAttention}, \code{nn.TransformerEncoder},
+\code{nn.TransformerEncoderLayer}, \code{nn.LayerNorm} and
+\code{F.scaled\us{}dot\us{}product\us{}attention}. Two of these --- \code{nn.LSTM} and \code{F.layer\us{}norm}
+--- appear exactly once each, inside the verification suite of
+Chapter~\ref{ch:verification}, where they serve as numerical references.
+
+\section{Model A: the bidirectional LSTM}
+
+\subsection{The cell}
+
+\code{LSTMCellScratch} implements Equations~\ref{eq:lstm_i}--\ref{eq:lstm_h} directly. The four
+gate pre-activations are computed as a single fused product and split with \code{chunk(4)}.
+
+{\small
+\begin{verbatim}
+class LSTMCellScratch(nn.Module):
+    def __init__(self, d_in, d_hidden):
+        super().__init__()
+        self.d_hidden = d_hidden
+        self.W = nn.Linear(d_in, 4 * d_hidden, bias=True)
+        self.U = nn.Linear(d_hidden, 4 * d_hidden, bias=False)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        k = 1.0 / math.sqrt(self.d_hidden)
+        for p in self.parameters():
+            nn.init.uniform_(p, -k, k)
+
+    def forward(self, x_t, h_prev, c_prev):
+        gates = self.W(x_t) + self.U(h_prev)        # (B, 4H) in one matmul
+        i, f, g, o = gates.chunk(4, dim=-1)         # gate order: i, f, g, o
+        i, f, o = torch.sigmoid(i), torch.sigmoid(f), torch.sigmoid(o)
+        g = torch.tanh(g)
+        c_t = f * c_prev + i * g
+        h_t = o * torch.tanh(c_t)
+        return h_t, c_t
+\end{verbatim}}
+
+Two design decisions deserve comment.
+
+\keypoint{Gate ordering.} The chunks are ordered $i, f, g, o$. This ordering is arbitrary in
+principle --- any consistent assignment trains equally well --- but it is chosen to match
+PyTorch's internal convention exactly. That correspondence is what permits verification check~1 of
+Chapter~\ref{ch:verification} to copy the reference implementation's weight matrices directly into
+this cell and demand numerical equality. Choosing a different ordering would have made the
+strongest available correctness test impossible.
+
+\keypoint{Bias placement.} The reference implementation carries two bias vectors, one associated
+with each of the input and hidden projections; their sum is mathematically equivalent to a single
+bias. This implementation uses one bias on \code{W} and none on \code{U}. The verification check
+accounts for this by copying the \emph{sum} of the two reference biases.
+
+\subsection{The recurrence, and the masking problem}
+
+\code{LSTMLayerScratch} unrolls the cell over the time dimension. Because batched sequences are
+padded to a common length, this is the point at which a from-scratch implementation is most
+likely to go subtly wrong.
+
+{\small
+\begin{verbatim}
+class LSTMLayerScratch(nn.Module):
+    def __init__(self, d_in, d_hidden, reverse=False):
+        super().__init__()
+        self.cell = LSTMCellScratch(d_in, d_hidden)
+        self.d_hidden, self.reverse = d_hidden, reverse
+
+    def forward(self, x, mask):
+        B, T, _ = x.shape
+        h = x.new_zeros(B, self.d_hidden)
+        c = x.new_zeros(B, self.d_hidden)
+        steps = range(T - 1, -1, -1) if self.reverse else range(T)
+        outputs = []
+        for t in steps:
+            m = mask[:, t].unsqueeze(1)                   # (B, 1)
+            h_new, c_new = self.cell(x[:, t], h, c)
+            h = m * h_new + (1.0 - m) * h                 # padded step = no-op
+            c = m * c_new + (1.0 - m) * c
+            outputs.append(h)
+        if self.reverse:
+            outputs.reverse()                             # back to position order
+        return torch.stack(outputs, dim=1), h
+\end{verbatim}}
+
+\keypoint{Problem 1: state corruption by padding.} The naive implementation applies the cell at
+every timestep unconditionally. Padded positions then continue to drive the recurrence: the hidden
+state at the nominal end of the sequence reflects an arbitrary number of pad-token updates rather
+than the true end of the document. Because padding length varies across a batch, the magnitude of
+this corruption varies per example.
+
+The fix is to gate the state update by the mask,
+\begin{equation}
+h_t = m_t \odot \tilde{h}_t + (1 - m_t) \odot h_{t-1},
+\end{equation}
+and identically for $c_t$, where $m_t \in \{0,1\}$ indicates a real token. A padded step is then an
+exact no-op: the state is carried forward unchanged.
+
+\keypoint{Problem 2: the backward direction's starting point.} The backward recurrence must begin
+at each sequence's \emph{own} final token, not at index 63. Sequences in a batch have different
+true lengths, so there is no single starting index.
+
+The implementation resolves this without any per-example index arithmetic, by exploiting the
+masking just described. Padding sits at the right of each sequence, and masked steps are exact
+no-ops. Iterating from $t = T-1$ down to $t = 0$ therefore passes through the padded region
+performing no updates, and the recurrence effectively begins at each sequence's last real token.
+The returned final state is the correct per-sequence endpoint in both directions.
+
+This equivalence is an argument, not an observation, and arguments of this kind are exactly what
+should be checked empirically. Verification checks~6 and~7 do so.
+
+\subsection{The classifier}
+
+{\small
+\begin{verbatim}
+class BiLSTMClassifier(nn.Module):
+    def forward(self, ids, lengths=None):
+        mask = (ids != PAD_ID).float()
+        x = self.embedding(ids)
+        out_f, h_f = self.forward_layer(x, mask)
+        out_b, h_b = self.backward_layer(x, mask)
+        seq = torch.cat([out_f, out_b], dim=-1)               # (B, T, 2H)
+        denom = mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+        mean_pooled = (seq * mask.unsqueeze(-1)).sum(dim=1) / denom
+        features = torch.cat([mean_pooled, h_f, h_b], dim=-1) # (B, 4H)
+        return self.classifier(self.dropout(features))
+\end{verbatim}}
+
+The pooling follows Section~\ref{sec:pooling}: the masked mean over all positions is concatenated
+with the final state of each direction, giving $4 d_h$ features. Note that the mean is computed
+with an explicitly masked numerator and a denominator equal to the true length --- dividing by the
+padded length would systematically shrink the representation of short documents.
+
+\section{Model B: the Transformer encoder}
+
+\subsection{Positional encoding and layer normalisation}
+
+{\small
+\begin{verbatim}
+def sinusoidal_positional_encoding(max_len, d_model):
+    position = torch.arange(max_len, dtype=torch.float32).unsqueeze(1)
+    even_i   = torch.arange(0, d_model, 2, dtype=torch.float32)
+    div_term = torch.exp(-math.log(10000.0) * even_i / d_model)
+    pe = torch.zeros(max_len, d_model)
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    return pe
+
+class LayerNormScratch(nn.Module):
+    def forward(self, x):
+        mu  = x.mean(dim=-1, keepdim=True)
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
+        return self.gamma * (x - mu) / torch.sqrt(var + self.eps) + self.beta
+\end{verbatim}}
+
+The \code{unbiased=False} argument is not incidental. The reference implementation normalises by
+$d$ rather than $d-1$, and using the unbiased estimator here would produce a small but systematic
+discrepancy. Verification check~2 confirms agreement to $5\times10^{-7}$.
+
+\subsection{Multi-head self-attention}
+
+{\small
+\begin{verbatim}
+class MultiHeadSelfAttentionScratch(nn.Module):
+    def _split_heads(self, t):
+        B, T, _ = t.shape
+        return t.view(B, T, self.n_heads, self.d_k).transpose(1, 2)   # (B,h,T,d_k)
+
+    def forward(self, x, key_mask=None, return_attention=False):
+        B, T, _ = x.shape
+        q = self._split_heads(self.W_q(x))
+        k = self._split_heads(self.W_k(x))
+        v = self._split_heads(self.W_v(x))
+
+        scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.d_k)      # (B,h,T,T)
+        if key_mask is not None:
+            scores = scores.masked_fill(key_mask[:, None, None, :] == 0, -1e9)
+
+        attention = torch.softmax(scores, dim=-1)
+        context = self.dropout(attention) @ v
+        context = context.transpose(1, 2).reshape(B, T, self.n_heads * self.d_k)
+        return self.W_o(context)
+\end{verbatim}}
+
+Three points are worth drawing out.
+
+\keypoint{The head reshape.} The projections are computed once at full width and then reshaped
+into $h$ heads. The sequence \code{view} then \code{transpose} is compact but opaque: it is easy to
+write a variant that runs without error while silently interleaving the head dimensions, which
+would mix features across heads. Verification check~3 targets this specifically by comparing
+against a reference that slices head columns explicitly.
+
+\keypoint{The mask broadcast.} The mask has shape $(B, T)$ and is indexed to $(B, 1, 1, T)$,
+broadcasting across heads and across query positions. The semantics are that every query, in every
+head, ignores padded \emph{keys}.
+
+\keypoint{The finite mask constant.} The mask is applied as $-10^{9}$ rather than $-\infty$, for
+the numerical reason given in Section~\ref{sec:masking}: a fully-masked row would otherwise
+produce \code{NaN} and destroy the gradients of the entire batch.
+
+\subsection{Encoder block and classifier}
+
+{\small
+\begin{verbatim}
+class EncoderBlockScratch(nn.Module):
+    def forward(self, x, key_mask=None):
+        x = x + self.dropout(self.attention(self.norm1(x), key_mask))
+        h = self.norm2(x)
+        h = self.ff_out(self.dropout(F.gelu(self.ff_in(h))))
+        return x + self.dropout(h)
+\end{verbatim}}
+
+The pre-norm ordering is visible directly: normalisation is applied to the \emph{input} of each
+sublayer, and the residual stream itself is never normalised, leaving an unobstructed gradient
+path from output to input.
+
+The classifier embeds, scales by $\sqrt{d_{\text{model}}}$, adds the positional encoding, applies
+the encoder blocks, applies a final normalisation, and reduces to a single vector by masked mean
+pooling before the linear head.
+
+\section{Training harness}
+
+Both models are trained by a single function, so that the training budget is identical by
+construction rather than by careful duplication.
+
+\begin{table}[ht]
+\centering
+\caption{Training configuration. All values except the learning rate are shared.}
+\label{tab:training_config}
+\begin{tabular}{lll}
+\toprule
+\textbf{Setting} & \textbf{BiLSTM} & \textbf{Transformer} \\
+\midrule
+Optimiser              & \multicolumn{2}{l}{AdamW \cite{kingma2015,loshchilov2019}} \\
+Weight decay           & \multicolumn{2}{l}{0.01} \\
+Batch size             & \multicolumn{2}{l}{128} \\
+Maximum epochs         & \multicolumn{2}{l}{8} \\
+Gradient clipping      & \multicolumn{2}{l}{1.0 (global norm)} \\
+Early stopping         & \multicolumn{2}{l}{validation macro-$F_1$, patience 2} \\
+Checkpoint selection   & \multicolumn{2}{l}{best validation macro-$F_1$} \\
+Random seed            & \multicolumn{2}{l}{42} \\
+\midrule
+Learning rate          & $10^{-3}$ & $3\times10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Gradient clipping at unit global norm addresses the exploding-gradient half of the pathology
+analysed in Section~\ref{sec:vanishing}. Early stopping on macro-$F_1$ rather than
+accuracy ensures that a model degrading on a single class is not selected.
+
+\section{Architecture configuration and parameter budget}
+
+\begin{table}[ht]
+\centering
+\caption{Architectural hyperparameters.}
+\label{tab:arch_config}
+\begin{tabular}{llll}
+\toprule
+\textbf{BiLSTM} & & \textbf{Transformer} & \\
+\midrule
+Embedding dimension & 128 & Model dimension $d_{\text{model}}$ & 128 \\
+Hidden dimension    & 128 & Attention heads $h$               & 4 \\
+Directions          & 2   & Encoder layers                    & 2 \\
+Pooled features     & 512 & Feed-forward dimension $d_{ff}$   & 256 \\
+Dropout             & 0.30 & Dropout                          & 0.10 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These sizes were chosen to equalise non-embedding capacity, which is the quantity that must be
+controlled for the comparison to be about architecture.
+
+\begin{table}[ht]
+\centering
+\caption[Parameter budget]{Parameter budget. The embedding table is identical in size for both
+models and dominates each total; the non-embedding column is therefore the meaningful measure of
+architectural capacity.}
+\label{tab:params}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Model} & \textbf{Total} & \textbf{Embedding} & \textbf{Non-embedding} \\
+\midrule
+BiLSTM      & 4{,}612{,}612 & 4{,}347{,}392 & 265{,}220 \\
+Transformer & 4{,}613{,}124 & 4{,}347{,}392 & 265{,}732 \\
+\midrule
+Difference  & 512 & 0 & 512 \ (0.19\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The embedding table accounts for approximately 94\% of each model's parameters. Reporting only
+total parameter counts would therefore obscure the comparison almost entirely --- the two models
+would appear to differ by 0.01\%, which is true but uninformative. The non-embedding figures differ
+by 512 parameters out of roughly 265{,}000, which is close enough that no observed performance
+difference can reasonably be attributed to capacity.

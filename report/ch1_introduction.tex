@@ -1,0 +1,178 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+\section{Background and motivation}
+
+Automatic topic classification of news text is one of the oldest and most durable applications of
+natural language processing. News agencies route incoming wire copy to desks; aggregators assemble
+sections; recommendation systems filter by interest; archives index by subject. In each case the
+underlying computational problem is the same: given a short passage of text, assign it to one of a
+small set of editorial categories.
+
+What has changed repeatedly over the past three decades is not the problem but the representation.
+Early systems treated a document as an unordered bag of words and applied a linear classifier to
+sparse count features. The introduction of distributed word representations replaced sparse
+indicators with dense vectors that encoded distributional similarity. Recurrent neural networks
+then made it possible to model a document as a \emph{sequence} rather than a set, processing tokens
+in order and maintaining a hidden state that in principle summarises everything seen so far. The
+Transformer subsequently discarded recurrence altogether, replacing the sequential state with an
+attention mechanism that relates every position to every other position directly.
+
+The Transformer's dominance in contemporary NLP is not in dispute. What is less often examined
+carefully is \emph{where} its advantage actually comes from, and whether that advantage is present
+in every task to which the architecture is applied. The mechanism that makes self-attention
+powerful --- a constant-length computational path between any two positions in a sequence --- is
+explicitly a statement about \emph{long-range} dependency. It is reasonable to ask what remains of
+that advantage when the sequences in question are not long.
+
+This question is not merely academic. A great many deployed text classification systems operate on
+short inputs: search queries, product titles, support ticket subjects, headlines. If the
+architectural advantage of self-attention is contingent on sequence length, then the
+engineering decision for such systems cannot be read off from benchmark leaderboards built on
+longer documents.
+
+\section{Problem statement}
+
+The task addressed in this report is four-class topic classification of short news documents. Given
+a news item consisting of a headline and a one-sentence description, the system must assign exactly
+one of four labels: \emph{World}, \emph{Sports}, \emph{Business}, or \emph{Science/Technology}.
+
+Two properties of this task make it a suitable vehicle for the architectural comparison at hand.
+
+First, the documents are short. In the corpus used here the median document is 39 tokens long. This
+places the task squarely in the regime where the long-range-dependency argument for self-attention
+is weakest, and therefore where a direct comparison is most informative.
+
+Second, the label set has four classes rather than two. A binary sentiment task yields a single
+accuracy number and a largely uninformative confusion structure. Four classes produce a confusion
+matrix with twelve off-diagonal cells, which permits a far more detailed account of \emph{how} a
+model fails rather than merely how often. As will be shown in Chapter~\ref{ch:results}, the error
+structure turns out to be considerably more informative than the headline accuracy.
+
+\section{Research question}
+
+The report addresses a single primary research question:
+
+\begin{quote}
+\textbf{How do recurrent networks and Transformers compare at classifying short news texts?}
+\end{quote}
+
+This decomposes into four subsidiary questions, each of which is answered empirically:
+
+\begin{enumerate}
+\item \textbf{Accuracy.} Does either architecture achieve higher classification accuracy, and is
+      any observed difference statistically distinguishable from sampling noise?
+\item \textbf{Error structure.} Do the two architectures fail on the same documents and the same
+      class boundaries, or do they exhibit different inductive biases?
+\item \textbf{Cost.} How do the architectures compare in training time, inference latency and
+      parameter efficiency at matched capacity?
+\item \textbf{Explanation.} Whatever differences or equivalences are observed, what property of the
+      task accounts for them?
+\end{enumerate}
+
+\section{Objectives}
+
+The study was conducted with the following concrete objectives.
+
+\begin{enumerate}
+\item To implement a bidirectional LSTM classifier from first principles, writing the gating
+      equations, the cell-state recurrence and the bidirectional unrolling explicitly rather than
+      invoking a library primitive.
+\item To implement a Transformer encoder classifier from first principles, writing scaled
+      dot-product attention, multi-head projection and merging, sinusoidal positional encoding,
+      layer normalisation and the residual block structure explicitly.
+\item To verify both implementations numerically against reference implementations and against
+      invariants that any correct implementation must satisfy, \emph{before} drawing any
+      experimental conclusion from them.
+\item To design a training and evaluation protocol in which architecture is the only free
+      variable, holding data, preprocessing, capacity and training budget fixed.
+\item To evaluate both models on a held-out test set using metrics appropriate to a balanced
+      multi-class problem, including a test of statistical significance on the paired predictions.
+\item To analyse the computational cost of both architectures and to interpret the result in terms
+      of the structural properties of recurrence and attention.
+\end{enumerate}
+
+\section{Scope and delimitations}
+
+It is as important to state what this study does \emph{not} attempt as what it does.
+
+\keypoint{Training from scratch, not transfer learning.} Both models are trained from randomly
+initialised embeddings on the task data alone. No pretrained representations are used. This is a
+deliberate scoping decision: it isolates the architectural question. A comparison involving a
+pretrained Transformer would primarily measure the value of pretraining, which is a different and
+already well-established result.
+
+\keypoint{Matched capacity, not maximum performance.} The models are deliberately sized to have
+near-identical non-embedding parameter counts. Neither is tuned to its maximum achievable accuracy
+on AG News. The objective is a fair comparison, not a leaderboard entry.
+
+\keypoint{A controlled subset, not the full corpus.} Following the case-study brief, 60{,}000 of
+the 120{,}000 available training records are used. The consequences of this choice are discussed
+in Section~\ref{sec:threats}.
+
+\keypoint{One corpus, one language, one document length regime.} All conclusions are drawn from
+English-language short news text. The report is explicit, particularly in
+Chapter~\ref{ch:discussion}, about which findings are expected to generalise and which are
+specific to this regime.
+
+\section{Contributions}
+
+This report makes the following contributions.
+
+\begin{enumerate}
+\item \textbf{A fully transparent implementation} of both architectures, in which every
+      sequence-modelling operation is written explicitly and is available for inspection. Nothing
+      of consequence is hidden inside a library call.
+
+\item \textbf{A verification methodology for hand-written layers.} Nine numerical checks are
+      specified, motivated and executed, covering equivalence against reference implementations,
+      mathematical invariants, masking correctness and gradient viability. The report argues that
+      such verification is not optional for from-scratch work, because the characteristic failure
+      mode is silent degradation rather than an observable error.
+
+\item \textbf{A genuinely controlled comparison}, in which data, preprocessing, capacity and
+      training budget are held fixed and only the architecture varies.
+
+\item \textbf{A statistically disciplined negative result.} The observed accuracy difference is
+      0.09 percentage points. Rather than reporting a winner, the study applies McNemar's exact
+      test, finds $p = 0.754$, and concludes that the architectures are indistinguishable on this
+      task. The report treats the significance test as essential rather than decorative.
+
+\item \textbf{A cost finding that contradicts the expected result}, together with an analysis that
+      distinguishes the asymptotic argument for attention from the constant factors that determine
+      wall-clock time at short sequence lengths.
+\end{enumerate}
+
+\section{Organisation of this report}
+
+The remainder of the report is structured as follows.
+
+\textbf{Chapter~\ref{ch:literature}} reviews the development of text classification from sparse
+feature methods through recurrent architectures to self-attention, and surveys published results
+on the AG News benchmark in order to situate the present work.
+
+\textbf{Chapter~\ref{ch:theory}} develops the mathematical background: the recurrent formulation
+and its gradient pathology, the LSTM gating solution, the attention mechanism and its scaling, and
+a complexity analysis that formalises the structural trade-off between the two architectures.
+
+\textbf{Chapter~\ref{ch:method}} describes the corpus, the data cleaning required, the controlled
+experimental design, the preprocessing pipeline and the evaluation metrics.
+
+\textbf{Chapter~\ref{ch:implementation}} presents the implementation of both models, with
+attention to the specific points at which a from-scratch implementation is most likely to go
+wrong.
+
+\textbf{Chapter~\ref{ch:verification}} presents the nine verification checks, their motivation and
+their results.
+
+\textbf{Chapter~\ref{ch:results}} reports the experimental results: training dynamics, accuracy,
+per-class performance, confusion structure, statistical significance, computational cost and a
+qualitative error analysis.
+
+\textbf{Chapter~\ref{ch:discussion}} interprets the results, answers the research question,
+compares the findings with published work, and states the threats to validity.
+
+\textbf{Chapter~\ref{ch:conclusion}} concludes and identifies future work.
+
+The appendices contain the full source listings of the hand-written components, the complete
+classification reports, and instructions for reproducing every number in this document.

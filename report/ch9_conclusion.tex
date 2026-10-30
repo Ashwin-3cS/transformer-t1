@@ -1,0 +1,82 @@
+\chapter{Conclusion and Future Work}
+\label{ch:conclusion}
+
+\section{Summary}
+
+This report has presented a controlled comparison of a bidirectional LSTM and a Transformer encoder
+on four-class news topic classification, with both architectures implemented from first principles
+and verified numerically before use.
+
+The experimental design held data, preprocessing, capacity and training budget fixed, so that
+architecture was the only free variable. Non-embedding parameter counts were matched to within
+0.19\%. Nine verification checks confirmed the hand-written layers against reference
+implementations and mathematical invariants, all passing, before any result was generated.
+
+\section{Findings}
+
+\keypoint{Finding 1 --- the architectures are statistically indistinguishable in accuracy.}
+91.14\% against 91.05\%, with McNemar's exact test returning $p = 0.754$ and the models agreeing on
+94.78\% of test documents. The observed difference of seven documents out of 7{,}600 cannot be
+separated from sampling noise.
+
+\keypoint{Finding 2 --- document length explains the equivalence.} The median document is 39
+tokens. Self-attention's structural advantage is constant-path-length access between distant
+positions, and a 39-token document contains almost no such distance. The finding is corroborated by
+the literature: FastText, which models no word order at all, is competitive on this benchmark.
+
+\keypoint{Finding 3 --- both models fail identically.} Identical per-class difficulty ordering,
+per-class $F_1$ agreeing to four decimal places on the hardest class, and a shared
+dominant confusion between Business and Sci/Tech accounting for roughly a quarter of all errors.
+Qualitative inspection shows these are documents with more than one defensible label --- a property
+of the annotation, not of either model.
+
+\keypoint{Finding 4 --- the cost comparison inverts the expected ordering.} The recurrent model
+trained 1.67 times faster per epoch and performed inference 2.43 times faster. The report attributes
+this to the absence of the two conditions required for self-attention's asymptotic advantage to
+materialise: hardware parallelism, and a sequence length exceeding the model dimension.
+
+\section{Contributions revisited}
+
+The study contributes a fully transparent implementation of both architectures; a transferable
+verification methodology for hand-written numerical layers; a genuinely controlled architectural
+comparison; a statistically disciplined negative result; and a cost measurement that contradicts
+the assumed ordering, together with an analysis of the conditions under which that ordering holds.
+
+\section{Future work}
+
+\keypoint{Multiple seeds.} The single most valuable extension. Training both architectures across
+ten or more seeds would yield confidence intervals and would convert the present
+``indistinguishable'' into a quantified bound on the maximum plausible difference. This is the
+direct remedy for the principal threat to validity identified in Section~\ref{sec:threats}.
+
+\keypoint{Sequence length sweep.} The central claim is that the equivalence is conditional on
+document length. This is directly testable: evaluating both architectures on corpora of
+systematically increasing document length should show the Transformer's advantage emerging as a
+function of length. A positive result would confirm the explanatory mechanism; a negative result
+would refute it.
+
+\keypoint{Parallel hardware.} Repeating the cost measurement on a GPU would test the prediction
+that the observed timing ordering reverses when parallel resources are available.
+
+\keypoint{Ablation studies.} Controlled variation of bidirectionality, head count, encoder depth
+and pooling strategy would separate the contribution of each design decision from the architectural
+family.
+
+\keypoint{Attention interpretability.} Visualising the learned attention distributions would
+indicate whether the encoder learns locally-concentrated patterns --- which would be further
+evidence for the document-length explanation --- or distributes attention broadly.
+
+\keypoint{Pretraining.} Comparing a pretrained Transformer against a pretrained recurrent model on
+identical corpora would isolate the architectural contribution in the pretrained setting, where
+most practical systems now operate.
+
+\section{Closing remarks}
+
+The most useful result of this study is a negative one, obtained only because a significance test
+was applied to a difference that looked, on its face, like a result. The second most useful is a
+cost measurement that contradicted the expectation stated at the outset of the work and was
+reported as measured rather than adjusted toward the textbook claim.
+
+Both outcomes point the same way. An architecture's advantages are conditional on the task
+exercising the properties that architecture provides, and on the hardware being able to realise
+them. Neither condition should be assumed; both can be measured.
