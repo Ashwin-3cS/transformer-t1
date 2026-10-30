@@ -6,3 +6,11 @@ __pycache__/
 
 # Contains a live Kaggle API token in plaintext - never commit.
 api.txt
+
+# node / deck build
+node_modules/
+package-lock.json
+package.json
+slides/*.pdf
+slides/slide-*.jpg
+slides/fig*.png
