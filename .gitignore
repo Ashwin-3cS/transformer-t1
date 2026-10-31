@@ -14,3 +14,14 @@ package.json
 slides/*.pdf
 slides/slide-*.jpg
 slides/fig*.png
+
+# RL study build artefacts
+slides_rl/*.pdf
+slides_rl/slide-*.jpg
+slides_rl/fig*.png
+report_rl/*.aux
+report_rl/*.log
+report_rl/*.toc
+report_rl/*.lof
+report_rl/*.lot
+report_rl/*.out
