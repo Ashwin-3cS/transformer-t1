@@ -1,0 +1,132 @@
+\chapter{Discussion}
+\label{ch:discussion}
+
+\section{Answering the research question}
+
+\begin{quote}
+\emph{How do Q-learning and SARSA compare when a warehouse robot must learn the shortest
+collision-free route to a delivery point?}
+\end{quote}
+
+\subsection{They are not better or worse; they answer different questions}
+
+Q-learning produced a deployed route of 19.40 steps against an optimum of 19. SARSA produced
+33.34. On deployed quality, Q-learning wins decisively, and the difference is significant at
+$p = 6.7\times10^{-7}$.
+
+Q-learning accumulated 21{,}626 walkway incidents while learning; SARSA accumulated 5{,}068. On
+the cost of learning, SARSA wins by a factor of 4.3, significant at $p = 1.9\times10^{-9}$.
+
+Both statements are true simultaneously, and neither is a ranking of the algorithms. They are
+answers to two different questions that are frequently conflated: \emph{how good is the policy you
+end up with} and \emph{what did it cost to get there}.
+
+\subsection{The mechanism, confirmed directly}
+
+Chapter~\ref{ch:theory} derived the mechanism: Q-learning's target maximises over next actions, so
+a hazard reachable only by a non-greedy action never enters the state value, while SARSA's target
+carries an $\varepsilon/|\mathcal{A}|$-weighted share of it.
+
+The sensitivity sweep confirms this without relying on inference. Q-learning's incident count is
+numerically identical --- $6{,}522$ --- at hazard penalties of $-10$, $-25$, $-50$, $-100$ and
+$-200$, and its route keeps a constant distance of 1.74 from the walkway. Scaling the cost of an
+incident by a factor of twenty changes its behaviour by nothing whatsoever, because the penalty is
+structurally invisible to its state values. SARSA's clearance, over the same sweep, rises
+monotonically from 1.91 to 5.39.
+
+It is rare for a derivation and a measurement to line up this cleanly, and it is worth stating that
+the agreement is what gives confidence that the implementation is measuring the intended quantity
+rather than an artefact.
+
+\subsection{The effect is a response to risk, not a property of the algorithms}
+
+Chapter~\ref{ch:dataset} reported a negative control that deserves more prominence than its
+placement there suggests. On a floor built from scattered racking with no localised hazard, both
+algorithms converged on the \emph{identical} 39-step optimum. There was no difference to measure.
+
+The same conclusion appears at the other end of the sensitivity sweep: at zero hazard penalty the
+clearance gap between the algorithms nearly closes.
+
+The on-policy/off-policy distinction is therefore not a general characteristic that one algorithm
+is safe and the other is greedy. It is a response to a specific structural property of the task ---
+a high-penalty region adjacent to the optimal path. Where that property is absent, so is the
+effect. Secondary accounts of Cliff Walking that present SARSA as ``the safe algorithm'' omit this
+condition, and the omission matters: on a task without an adjacent hazard, choosing SARSA buys
+nothing and costs route length.
+
+\subsection{Which to use, and when}
+
+The decision follows from where learning happens.
+
+\keypoint{Learning in simulation, deploying the result.} Q-learning. Training incidents are free
+because they occur in a simulator, and its asymptotic optimality is exactly what is wanted. This
+describes most industrial practice.
+
+\keypoint{Learning on a live floor among people.} SARSA, or an explicit safe-exploration method.
+Every incident is real, and a 4.3-fold reduction in incidents during training is worth a 14-step
+detour that can be re-optimised later.
+
+\keypoint{Either, followed by $\varepsilon$ decay to zero.} Both converge to the optimal policy in
+the limit under GLIE conditions \cite{singh2000}. The residual $\varepsilon = 0.05$ used here was
+retained deliberately to keep the distinction visible.
+
+\section{An uncomfortable comparison}
+
+The heuristic controller recovered from the dataset --- move toward the goal --- achieved the
+optimal 19 steps with zero incidents, equalling Q-learning and beating SARSA.
+
+This should not be waved away. On this floor, that controller is optimal, because the main aisle
+runs straight from the start to the goal and ``move toward the goal'' is therefore sufficient. The
+learned agents spent 3{,}000 episodes to match what a four-line rule achieves immediately.
+
+The honest reading is that the warehouse floor used here is a good instrument for isolating the
+on-policy/off-policy distinction, and a poor advertisement for reinforcement learning as a
+solution to this particular routing problem. A greedy heuristic fails when the direct direction is
+blocked and a detour is required, which is precisely the situation the generality check across
+twelve floors begins to probe --- but that check was not designed to compare against the heuristic,
+and so this report does not claim the learned policies are superior to it. Establishing that would
+require floors where the heuristic demonstrably fails, and is identified as future work.
+
+\section{Threats to validity}
+
+\subsection{Internal validity}
+
+\keypoint{The reward constants are assumed.} The dataset supplied no usable reward signal, so the
+step cost, bump penalty, hazard penalty and goal reward were chosen. The sensitivity sweep
+quantifies the dependence on the one that drives the result, and shows the conclusion holds across
+$-10$ to $-200$ while disappearing at $0$.
+
+\keypoint{A constant step size.} $\alpha = 0.10$ violates the Robbins--Monro square-summability
+condition, so neither algorithm converges to a point. Both use the same value, so the comparison is
+unaffected, but asymptotic claims are not supported by this design.
+
+\keypoint{Shared hyperparameters.} $\alpha$, $\gamma$ and the $\varepsilon$ schedule were fixed and
+shared rather than tuned per algorithm. This is the correct choice for a controlled comparison, but
+a schedule better suited to one algorithm could shift the balance.
+
+\subsection{External validity}
+
+\keypoint{The hazard is a construction.} The racking is real; the cross-aisle and the walkway are
+not. Without them there is no effect, so this is not a neutral design decision and is not presented
+as one. What the study establishes is the behaviour of the two algorithms \emph{given} such a
+structure, together with evidence about what happens when it is absent.
+
+\keypoint{One floor geometry.} All floors share the same three-row cross-aisle arrangement; only
+the racking varies. A different hazard topology --- scattered restricted zones, or a walkway
+crossing the route rather than running parallel to it --- might behave differently.
+
+\keypoint{Tabular only.} 400 states are enumerable. Under function approximation, off-policy
+bootstrapping interacts with the deadly triad \cite{sutton2018} in ways this study cannot speak to.
+
+\keypoint{Deterministic dynamics.} Slip probability was zero. Stochastic transitions would be
+expected to widen the gap, since SARSA's conservatism also hedges against randomness, but this was
+not measured.
+
+\subsection{Construct validity}
+
+\keypoint{``Incidents'' are a proxy.} Counting walkway entries treats every incident as equally
+costly, which a real safety analysis would not.
+
+\keypoint{Online return mixes two things.} It aggregates route efficiency and incident cost into
+one number. The report therefore also presents incident counts separately, since they are the
+quantity an operator would actually care about.

@@ -1,0 +1,113 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+\section{Background}
+
+A modern fulfilment warehouse is a shared workspace. Automated mobile robots move stock between
+racking and packing stations while people walk the same floor, and the robot's routing problem is
+therefore not only about finding the shortest path. It is about finding the shortest path that is
+also safe to execute, and about doing so without causing harm during the period in which it is
+still learning.
+
+That last qualification is easy to overlook and is the subject of this report. A policy learned in
+a simulator can be evaluated purely on its final quality, because mistakes made during training
+cost nothing. A policy learned on a live warehouse floor cannot: every exploratory action is taken
+in the real world, and the cost of learning is a cost the operator actually pays.
+
+Reinforcement learning offers two classical algorithms for this class of problem, and they differ
+precisely on this point. Q-learning \cite{watkins1989,watkins1992} learns the value of the optimal
+policy regardless of how the agent is behaving. SARSA \cite{rummery1994,sutton1996} learns the
+value of the policy the agent is actually following, exploration included. On a benign problem the
+two converge to the same answer. On a problem where exploration can be costly they do not, and the
+difference is both predictable and practically important.
+
+\section{Problem statement}
+
+The task is navigation on a warehouse floor represented as a grid. A robot starts at a charging
+station and must reach a delivery point. Racking blocks movement. A pedestrian walkway crosses the
+floor, and entering it is a safety incident.
+
+The shortest route runs along the main aisle, which lies directly alongside the walkway. A second
+route one row further from the walkway is slightly longer and carries no such exposure. The
+problem is interesting because those two routes differ in exactly the way that distinguishes the
+two algorithms: the fast route is optimal for an agent that never makes mistakes, and dangerous
+for one that is still exploring.
+
+\section{Research question}
+
+\begin{quote}
+\textbf{How do Q-learning and SARSA compare when a warehouse robot must learn the shortest
+collision-free route to a delivery point?}
+\end{quote}
+
+Four subsidiary questions are answered empirically:
+
+\begin{enumerate}
+\item \textbf{Deployed quality.} After training, which algorithm's greedy policy produces the
+      shorter route, and how close is it to the true optimum?
+\item \textbf{Cost of learning.} Which algorithm accumulates fewer safety incidents while learning,
+      and what does training cost in accumulated reward?
+\item \textbf{Significance.} Are the observed differences distinguishable from seed-to-seed noise?
+\item \textbf{Mechanism.} Whatever is observed, what property of the algorithms and of the task
+      accounts for it?
+\end{enumerate}
+
+\section{Objectives}
+
+\begin{enumerate}
+\item Implement a grid-world warehouse environment from first principles, with no reinforcement
+      learning library.
+\item Implement Q-learning and SARSA from first principles, sharing all machinery except the
+      update target, so that the comparison isolates the on-policy/off-policy distinction.
+\item Audit the source dataset column by column and use only what carries signal, documenting the
+      exclusions with evidence.
+\item Verify the environment and both agents numerically before any experiment is run.
+\item Compare the algorithms over thirty paired seeds with a paired non-parametric significance
+      test and reported effect sizes.
+\item Test the robustness of the result against an external baseline, against independently
+      generated floors, and against the main modelling assumption.
+\end{enumerate}
+
+\section{Scope and delimitations}
+
+\keypoint{Tabular methods only.} The state space is 400 cells, small enough to enumerate. Nothing
+here concerns function approximation or deep reinforcement learning, where off-policy bootstrapping
+raises stability issues that do not arise in the tabular case.
+
+\keypoint{A simulated environment built on real layouts.} This point is developed at length in
+Chapter~\ref{ch:dataset} because it determines what the study can honestly claim. The obstacle
+layouts come from the dataset; the dynamics and the reward structure are written here.
+
+\keypoint{One task family.} All results concern grid navigation with a localised hazard. The
+report is explicit about which findings depend on that structure.
+
+\keypoint{No tuning contest.} Both algorithms share one hyperparameter setting. The objective is
+a controlled comparison, not the best achievable performance from either.
+
+\section{Contributions}
+
+\begin{enumerate}
+\item \textbf{A documented dataset audit} showing that several columns of a published Kaggle
+      dataset --- its reward signal, its path lengths, its episode structure --- carry no usable
+      information, with the evidence rather than the assertion.
+\item \textbf{A verification suite for tabular RL}, including an equivalence test that pins the
+      two algorithms to each other under a greedy policy, where they are mathematically identical.
+\item \textbf{A properly paired multi-seed comparison}, with significance testing and effect
+      sizes, rather than a single run per algorithm.
+\item \textbf{An explicit separation of what is data from what is assumed}, together with a
+      sensitivity analysis over the assumption that drives the result.
+\item \textbf{A negative control}: the demonstration that on a floor without a localised hazard,
+      the two algorithms converge on the identical optimum and the much-cited distinction between
+      them simply does not appear.
+\end{enumerate}
+
+\section{Organisation}
+
+Chapter~\ref{ch:literature} reviews temporal-difference control and the on-policy/off-policy
+distinction. Chapter~\ref{ch:theory} develops the mathematics: Markov decision processes, the
+Bellman equations, TD(0), the two control algorithms and their convergence conditions.
+Chapter~\ref{ch:dataset} audits the dataset and specifies the environment, separating data from
+assumption. Chapter~\ref{ch:implementation} presents the implementation.
+Chapter~\ref{ch:verification} presents the verification suite. Chapter~\ref{ch:results} reports the
+experiment. Chapter~\ref{ch:discussion} interprets it and states the threats to validity.
+Chapter~\ref{ch:conclusion} concludes.

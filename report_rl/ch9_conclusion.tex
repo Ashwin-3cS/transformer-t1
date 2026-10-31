@@ -1,0 +1,70 @@
+\chapter{Conclusion and Future Work}
+\label{ch:conclusion}
+
+\section{Summary}
+
+This report compared Q-learning and SARSA on a warehouse navigation task in which the shortest
+route runs alongside a pedestrian walkway. Both algorithms were implemented from first principles,
+sharing every component except the single expression forming their update target, and were verified
+against thirteen numerical checks before any experiment was run --- including an equivalence test
+confirming that at $\varepsilon = 0$ they produce bit-identical action-value tables.
+
+The comparison used thirty paired seeds with Wilcoxon signed-rank tests and bootstrap confidence
+intervals, addressing directly the single-seed limitation that was the principal weakness of the
+predecessor study in this repository.
+
+\section{Findings}
+
+\keypoint{Finding 1 --- the two algorithms separate in opposite directions on two different
+questions.} Q-learning's deployed route averaged 19.40 steps against a BFS optimum of 19; SARSA's
+averaged 33.34 ($p = 6.7\times10^{-7}$). Q-learning accumulated 21{,}626 walkway incidents during
+training against SARSA's 5{,}068, a factor of 4.3 ($p = 1.9\times10^{-9}$). Four of five metrics
+differed significantly, with large effects.
+
+\keypoint{Finding 2 --- the mechanism is directly observable, not merely inferred.} Q-learning's
+behaviour is numerically invariant to the hazard penalty: identical incident counts and identical
+clearance at $-10$, $-25$, $-50$, $-100$ and $-200$. Because its target maximises over next
+actions, a penalty reachable only by a non-greedy action never enters the state value. SARSA's
+clearance rises monotonically over the same sweep, from 1.91 to 5.39.
+
+\keypoint{Finding 3 --- the effect requires a localised hazard and vanishes without one.} On a
+floor of scattered racking with no walkway, both algorithms converged on the identical optimum.
+The distinction is a response to a property of the task, not a general ranking.
+
+\keypoint{Finding 4 --- a four-line heuristic matched the better of the two.} The controller
+recovered from the dataset achieved the optimal 19 steps with zero incidents. On this floor,
+neither learned agent demonstrated superiority over it.
+
+\section{Future work}
+
+\keypoint{Floors where the heuristic fails.} The most valuable extension, since it is the
+weakness identified in Chapter~\ref{ch:discussion}. Constructing layouts that require detours
+around blocking racking would establish whether the learned policies offer anything the greedy rule
+does not.
+
+\keypoint{Expected SARSA and Double Q-learning.} Expected SARSA \cite{vanseijen2009} replaces the
+sampled bootstrap with its expectation under the policy and should sit between the two algorithms
+studied here, with lower variance; Double Q-learning \cite{hasselt2010} would address the
+maximisation bias the $\max$ operator introduces.
+
+\keypoint{Decaying $\varepsilon$ to zero.} Under GLIE conditions both algorithms converge to the
+optimal policy. Measuring the rate at which SARSA's route shortens as $\varepsilon \to 0$ would
+quantify how much of its conservatism is permanent and how much is a function of the exploration
+schedule.
+
+\keypoint{Stochastic dynamics.} Non-zero slip probability would test whether SARSA's advantage
+widens when the environment, and not only the policy, is a source of randomness.
+
+\keypoint{Function approximation.} Scaling beyond enumerable state spaces would bring the
+off-policy stability question into play, which the tabular setting excludes by construction.
+
+\section{Closing remarks}
+
+The most useful result here is not the headline comparison, which reproduces a textbook example.
+It is the sensitivity sweep, which shows Q-learning's behaviour to be entirely unmoved by a
+twenty-fold change in the cost of an incident --- and the negative control, which shows that on a
+task without an adjacent hazard the distinction between these two celebrated algorithms does not
+exist at all.
+
+Both point the same way. An algorithm's advantages are conditional on the task exercising the
+property that algorithm addresses, and the conditions matter as much as the result.

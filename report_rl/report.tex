@@ -1,0 +1,113 @@
+%=====================================================================
+%  Q-learning vs SARSA on warehouse robot navigation
+%  Build:  ./build.sh   (three pdflatex passes; clears stale auxiliaries)
+%
+%  NOTE: this TeX installation has no array, booktabs, geometry, xcolor,
+%  titlesec, caption or listings, and no TS1 text-symbol fonts. Margins are
+%  therefore set by hand, tables use plain tabular, the booktabs rules are
+%  aliased to \hline, and the itemize label and underscore are redefined
+%  via \char. Do not add those packages back without checking kpsewhich.
+%=====================================================================
+\documentclass[11pt,a4paper,oneside]{report}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{url,verbatim,color,calc,ifthen,alltt}
+\usepackage[hidelinks]{hyperref}
+
+% ---- page geometry (the geometry package is unavailable) --------------------
+\setlength{\oddsidemargin}{0.10in}
+\setlength{\evensidemargin}{0.10in}
+\setlength{\textwidth}{6.20in}
+\setlength{\topmargin}{-0.30in}
+\setlength{\headheight}{14pt}
+\setlength{\headsep}{20pt}
+\setlength{\textheight}{9.15in}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+
+% ---- booktabs-style rules (booktabs is unavailable) -------------------------
+\newcommand{\toprule}{\hline}
+\newcommand{\midrule}{\hline}
+\newcommand{\bottomrule}{\hline}
+\renewcommand{\arraystretch}{1.25}
+
+% ---- TS1 fonts are absent: supply these from the base encodings -------------
+\newcommand{\bs}{\char`\\}
+\newcommand{\us}{\char`\_}
+\renewcommand{\labelitemi}{$\bullet$}
+\renewcommand{\labelitemii}{$\circ$}
+
+\definecolor{accent}{rgb}{0.165,0.471,0.839}
+\definecolor{warm}{rgb}{0.922,0.408,0.204}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\keypoint}[1]{\par\vspace{3pt}\noindent\textbf{#1}}
+
+\hyphenation{Q-learn-ing SARSA ware-house ex-plo-ra-tion}
+
+\begin{document}
+
+%=====================================================================
+\begin{titlepage}
+\centering
+\vspace*{0.6in}
+
+{\Large\bfseries On-Policy and Off-Policy Temporal-Difference Control\\[6pt]
+for Warehouse Robot Navigation}\\[10pt]
+
+{\large A controlled comparison of Q-learning and SARSA,\\
+implemented from first principles and evaluated over thirty paired seeds}\\[0.5in]
+
+\rule{\textwidth}{0.8pt}\\[0.25in]
+
+{\large\textbf{Case Study Report}}\\[6pt]
+{\large Reinforcement Learning}\\[6pt]
+{\large Smart Warehouse Robot Navigation --- learning the shortest\\
+collision-free delivery route}\\[0.3in]
+
+\rule{\textwidth}{0.8pt}\\[0.5in]
+
+\begin{tabular}{rl}
+\textbf{Research question} & How do Q-learning and SARSA compare when a robot must\\
+                           & learn the shortest collision-free route to a delivery point?\\[8pt]
+\textbf{Dataset}           & \code{zoya77/robot-path-planning-navigation-dataset}\\
+                           & 7{,}980 warehouse snapshots; 5{,}045 distinct 5$\times$5 layouts\\[8pt]
+\textbf{Algorithms}        & Q-learning (off-policy) and SARSA (on-policy),\\
+                           & both written from scratch in NumPy\\[8pt]
+\textbf{Protocol}          & 30 paired seeds per algorithm, identical budget,\\
+                           & Wilcoxon signed-rank on the paired differences\\
+\end{tabular}
+
+\vfill
+{\large Source code and executed notebook:}\\[4pt]
+\url{https://github.com/Ashwin-3cS/transformer-t1}\\[0.3in]
+{\large \today}
+\end{titlepage}
+
+\pagenumbering{roman}
+\setcounter{page}{2}
+
+\input{abstract}
+\tableofcontents
+\listoffigures
+\listoftables
+
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{ch1_introduction}
+\input{ch2_literature}
+\input{ch3_theory}
+\input{ch4_dataset}
+\input{ch5_implementation}
+\input{ch6_verification}
+\input{ch7_results}
+\input{ch8_discussion}
+\input{ch9_conclusion}
+\input{references}
+\input{appendices}
+
+\end{document}

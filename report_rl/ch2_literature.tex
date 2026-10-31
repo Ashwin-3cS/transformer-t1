@@ -1,0 +1,135 @@
+\chapter{Literature Review}
+\label{ch:literature}
+
+\section{Overview}
+
+This chapter traces the development of value-based reinforcement learning up to the two algorithms
+compared here, and then examines what is and is not well established about the difference between
+them. The organising question throughout is: \emph{whose} value is the agent learning?
+
+\section{Markov decision processes and dynamic programming}
+
+The formal setting is the Markov decision process, developed by Bellman \cite{bellman1957} and
+given its modern treatment by Puterman \cite{puterman1994}. An MDP specifies states, actions,
+transition probabilities and rewards, and the Markov property asserts that the next state depends
+only on the current state and action.
+
+Dynamic programming --- policy iteration and value iteration --- solves an MDP exactly, but
+requires the transition and reward functions to be known in advance. A warehouse robot does not
+have them. It has only the ability to act and observe what follows, which is the setting
+reinforcement learning addresses.
+
+\section{Monte Carlo and temporal-difference learning}
+
+Two families of method learn from experience alone. Monte Carlo methods wait until an episode
+terminates and update toward the observed return; they are unbiased but high-variance, and cannot
+learn from incomplete episodes.
+
+Temporal-difference learning, introduced by Sutton \cite{sutton1988}, instead updates toward a
+\emph{bootstrapped} estimate --- the immediate reward plus the discounted value of the successor
+state. TD methods learn online, from incomplete episodes, with far lower variance. The cost is
+bias, since the target depends on the current estimate, which is itself wrong. Convergence results
+for TD(0) under suitable step-size conditions are given by Dayan \cite{dayan1992} and
+Jaakkola et al.\ \cite{jaakkola1994}.
+
+The practical importance of this trade-off is that TD control learns \emph{while the robot is
+still moving}, which is what makes the cost of exploration a measurable quantity in this study.
+
+\section{Q-learning}
+
+Q-learning, introduced by Watkins \cite{watkins1989} and proved convergent by Watkins and Dayan
+\cite{watkins1992}, is the canonical \emph{off-policy} TD control algorithm. Its update
+bootstraps from the maximum over next-state action values,
+\[
+Q(s,a) \leftarrow Q(s,a) + \alpha\Big[r + \gamma \max_{a'} Q(s',a') - Q(s,a)\Big],
+\]
+and this maximisation is what makes it off-policy: the target describes the greedy policy,
+irrespective of the policy that generated the data. Given sufficient exploration and a suitable
+step-size schedule, $Q$ converges to the optimal action-value function $Q^{*}$ regardless of how
+the agent behaves while learning.
+
+That independence is the algorithm's defining strength and, in the setting studied here, the source
+of its characteristic weakness: because the target never refers to the behaviour policy, the cost
+of the agent's own exploration never enters its estimates.
+
+\section{SARSA}
+
+SARSA was introduced by Rummery and Niranjan \cite{rummery1994} and named by Sutton
+\cite{sutton1996} after the quintuple $(s,a,r,s',a')$ its update consumes:
+\[
+Q(s,a) \leftarrow Q(s,a) + \alpha\Big[r + \gamma Q(s',a') - Q(s,a)\Big],
+\qquad a' \sim \pi(\cdot \mid s').
+\]
+Here $a'$ is the action the agent will actually take. The update therefore evaluates the behaviour
+policy itself, making SARSA \emph{on-policy}. Under an $\varepsilon$-greedy policy, SARSA converges
+to the optimal $\varepsilon$-greedy policy rather than to the optimal policy, and converges to
+$Q^{*}$ only if $\varepsilon$ is decayed to zero appropriately --- the GLIE conditions
+\cite{singh2000}.
+
+This apparent weakness is the source of its practical strength. By evaluating the policy that
+includes exploration, SARSA accounts for the possibility that the next action is random, and
+therefore assigns lower value to states from which a random action would be catastrophic.
+
+\section{The Cliff Walking result}
+
+The clearest demonstration of the distinction is Example 6.6 of Sutton and Barto \cite{sutton2018},
+\emph{Cliff Walking}. An agent crosses a grid from start to goal; a row of cliff cells lies between
+them. Stepping into the cliff incurs a large penalty and returns the agent to the start.
+
+The optimal path runs immediately alongside the cliff. Q-learning learns exactly that path, and
+consequently falls off repeatedly while exploring, so its online performance during learning is
+poor. SARSA learns a longer path further from the edge, because its estimates price in the
+possibility of an $\varepsilon$-greedy step over it, and achieves better online return. Decaying
+$\varepsilon$ makes both converge to the optimal policy.
+
+Three features of this result are essential and are reproduced deliberately in the present study:
+
+\begin{itemize}
+\item The hazard is \textbf{localised and adjacent to the optimal path}. Without this there is no
+      decision to make and the two algorithms behave identically.
+\item The environment is \textbf{deterministic}. The effect is caused by $\varepsilon$-greedy
+      exploration alone, not by stochastic dynamics.
+\item The comparison measures \textbf{two distinct quantities} --- online return during learning,
+      and the quality of the final greedy policy --- which have different answers.
+\end{itemize}
+
+The third point is the one most often lost in secondary accounts, which tend to report that
+``SARSA is safer'' without noting that Q-learning's final policy is the better one.
+
+\section{Related developments}
+
+Expected SARSA \cite{vanseijen2009} replaces the sampled $Q(s',a')$ with its expectation under the
+policy, reducing variance while remaining on-policy; it subsumes both algorithms as special cases.
+Double Q-learning \cite{hasselt2010} addresses the maximisation bias that the $\max$ operator
+introduces. Neither is evaluated here, since the object of study is the basic on-policy/off-policy
+contrast, but both are natural extensions (Chapter~\ref{ch:conclusion}).
+
+The distinction acquires additional importance under function approximation, where off-policy
+bootstrapping combined with approximation and bootstrapping forms the ``deadly triad''
+\cite{sutton2018} and can diverge outright. In the tabular setting studied here both algorithms
+are convergent, so the difference observed is about the \emph{policy being evaluated} and not
+about stability.
+
+\section{Reinforcement learning for warehouse robots}
+
+Automated guided vehicles and autonomous mobile robots in warehouses are a well-established
+application area, and safety around human co-workers is a recognised constraint rather than an
+afterthought. The field of safe reinforcement learning, surveyed by Garc\'ia and Fern\'andez
+\cite{garcia2015}, is explicitly concerned with the problem this report measures: the cost incurred
+\emph{during} learning, as distinct from the quality of the policy that results.
+
+Within that framing, the on-policy/off-policy choice is one of the simplest available mechanisms
+for trading final optimality against safety while learning, and it requires no additional
+machinery --- only a different bootstrap target.
+
+\section{Research gap}
+
+The Cliff Walking result is textbook material, usually presented as a single illustrative run on a
+$4 \times 12$ grid. What is less commonly available is that demonstration carried out with the
+methodological care that would be expected of an empirical claim: multiple seeds, paired
+statistical testing, an external optimality reference, a check that the effect generalises across
+problem instances, and a sensitivity analysis over the hazard penalty that produces it.
+
+This report supplies those, on a navigation problem whose obstacle layouts come from a published
+dataset rather than from a hand-drawn figure, and it reports a negative control --- a floor without
+a localised hazard, on which the celebrated distinction vanishes entirely.

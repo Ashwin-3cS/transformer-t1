@@ -1,0 +1,99 @@
+\chapter{Verification}
+\label{ch:verification}
+
+\section{Why this chapter precedes the results}
+
+A reinforcement learning defect rarely announces itself. A mis-signed reward, an off-by-one in the
+state encoding, or SARSA bootstrapping from a freshly sampled action rather than the one it will
+execute --- each of these still produces a learning curve that rises, an agent that improves, and a
+comparison that looks entirely respectable. The agent learns \emph{something}; it is simply not
+what the experiment claims to be measuring.
+
+Thirteen checks therefore run before any experiment, and the suite asserts on failure so that
+results cannot be produced from an unverified implementation.
+
+\section{Environment checks}
+
+\begin{table}[ht]
+\centering
+\caption{Checks on the environment.}
+\begin{tabular}{llr}
+\toprule
+\textbf{Check} & \textbf{Rules out} & \textbf{Result} \\
+\midrule
+State encoding bijective            & index collisions          & 400/400 \\
+Bump leaves position unchanged      & movement bookkeeping      & pass \\
+Bump: penalty, no termination       & wrong episode semantics   & $-5$, continues \\
+Incident returns robot to start     & hazard transition         & pass \\
+Incident: penalty, no termination   & wrong episode semantics   & $-100$, continues \\
+Goal: reward and termination        & double-counted terminal   & $+100$, ends \\
+Return accounting matches env       & drift between env and agent & exact \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Ground-truth checks}
+
+Breadth-first search provides the optimality reference, so it is itself verified: against a
+hand-checked $5\times5$ grid whose answer (8 steps) was counted by hand, and against a deliberately
+disconnected grid where it must report unreachability rather than a spurious distance. A third
+check confirms the optimal route respects the walkway exclusion.
+
+\section{The decisive check}
+
+\keypoint{At $\varepsilon = 0$, the two algorithms must be bit-identical.}
+
+Under a greedy policy the action selected at $s'$ \emph{is} the maximising action, so
+$\max_{a'} Q(s',a')$ and $Q(s',a')$ are the same quantity and
+Equations~\ref{eq:qlearning} and~\ref{eq:sarsa} coincide exactly. Two agents trained from the same
+seed with $\varepsilon$ fixed at zero must therefore produce identical action-value tables.
+
+Measured: $\max |Q_{\text{Q-learning}} - Q_{\text{SARSA}}| = 0.00\times10^{0}$ --- identical to
+the last bit.
+
+This is the strongest statement available about the implementation. It establishes that the two
+classes differ \emph{only} in how exploration is handled, which is the precise claim the entire
+study rests on. Had SARSA been sampling a fresh action instead of reusing the one it executes, the
+tables would have diverged here even with $\varepsilon = 0$.
+
+\section{Learning checks}
+
+Both agents are required to recover the known optimal policy on a $3\times3$ open grid, where the
+optimum is four steps. Both do. A forward pass can be correct while gradients, or in this case
+value propagation, fail to reach the parameters; this check closes that gap.
+
+\section{Results}
+
+\begin{table}[ht]
+\centering
+\caption[Verification results]{All thirteen checks, executed before every experiment.}
+\label{tab:verification}
+\begin{tabular}{clr}
+\toprule
+\textbf{\#} & \textbf{Check} & \textbf{Result} \\
+\midrule
+1  & State encoding bijective                   & pass \\
+2  & Bump: robot does not move                  & pass \\
+3  & Bump: penalty, episode continues           & pass \\
+4  & Incident: returned to start                & pass \\
+5  & Incident: penalty, episode continues       & pass \\
+6  & Goal: reward and termination               & pass \\
+7  & BFS matches hand-checked grid              & pass \\
+8  & BFS reports unreachable as $-1$            & pass \\
+9  & Optimal route avoids the walkway           & pass \\
+10 & $\varepsilon=0$: the two agents are identical & $0.00\times10^{0}$ \\
+11 & Q-learning optimal on a $3\times3$ grid    & 4 of 4 steps \\
+12 & SARSA optimal on a $3\times3$ grid         & 4 of 4 steps \\
+13 & Return accounting matches the environment  & exact \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{What this does not establish}
+
+The suite establishes that the environment and the agents compute what they are intended to
+compute. It does not establish that the \emph{experimental design} is sound --- a poor choice of
+reward constants, or a floor without a hazard, would pass every check above and still produce a
+meaningless comparison. That is why Chapter~\ref{ch:results} includes an external baseline, a
+generality check and a sensitivity sweep, and why Chapter~\ref{ch:discussion} reports a negative
+control.

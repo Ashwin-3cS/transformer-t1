@@ -1,0 +1,216 @@
+\chapter{Theoretical Background}
+\label{ch:theory}
+
+This chapter develops the mathematics the implementation follows term by term. The verification
+suite of Chapter~\ref{ch:verification} checks these equations numerically.
+
+\section{Markov decision processes}
+
+A finite MDP is a tuple $(\mathcal{S}, \mathcal{A}, P, R, \gamma)$ where $\mathcal{S}$ is a finite
+set of states, $\mathcal{A}$ a finite set of actions,
+\begin{equation}
+P(s' \mid s,a) = \Pr\{S_{t+1} = s' \mid S_t = s, A_t = a\}
+\end{equation}
+the transition kernel, $R(s,a)$ the expected immediate reward, and $\gamma \in [0,1)$ the discount
+factor. The defining assumption is the Markov property: the distribution of the next state depends
+on the present state and action alone.
+
+For the warehouse of Chapter~\ref{ch:dataset}, $\mathcal{S}$ is the set of floor cells,
+$|\mathcal{S}| = 400$, and $\mathcal{A} = \{\text{up}, \text{down}, \text{left}, \text{right}\}$.
+The robot's cell is a sufficient statistic for its future, so the Markov property holds exactly
+rather than approximately --- an advantage of this problem as an experimental vehicle.
+
+\subsection{Returns and the discount factor}
+
+The agent maximises the expected discounted return
+\begin{equation}
+G_t = \sum_{k=0}^{\infty} \gamma^{k} R_{t+k+1}.
+\end{equation}
+Discounting serves two purposes: it keeps the sum finite in continuing tasks, and it expresses a
+preference for sooner rewards. With $\gamma = 0.99$ a reward $n$ steps away retains $0.99^{n}$ of
+its value, so over the route lengths considered here (of order $20$--$40$ steps) the goal reward
+remains clearly visible from the start state, which is what makes the task learnable at all.
+
+\section{Value functions and the Bellman equations}
+
+The action-value function of a policy $\pi$ is
+\begin{equation}
+Q^{\pi}(s,a) = \operatorname{E}_{\pi}\!\left[G_t \mid S_t = s, A_t = a\right],
+\end{equation}
+and satisfies the Bellman expectation equation
+\begin{equation}
+Q^{\pi}(s,a) = \sum_{s'} P(s' \mid s,a)\Big[R(s,a) + \gamma \sum_{a'} \pi(a' \mid s')\, Q^{\pi}(s',a')\Big].
+\label{eq:bellman_exp}
+\end{equation}
+The optimal action-value function satisfies the Bellman optimality equation
+\begin{equation}
+Q^{*}(s,a) = \sum_{s'} P(s' \mid s,a)\Big[R(s,a) + \gamma \max_{a'} Q^{*}(s',a')\Big].
+\label{eq:bellman_opt}
+\end{equation}
+
+\keypoint{The entire distinction studied in this report is the difference between
+Equations~\ref{eq:bellman_exp} and~\ref{eq:bellman_opt}.} The expectation equation averages over
+the actions the policy will actually take; the optimality equation takes the maximum. SARSA is a
+sample-based solver for the first; Q-learning is a sample-based solver for the second. Everything
+that follows is a consequence of that one structural difference.
+
+\section{Temporal-difference learning}
+
+TD(0) estimates $Q^{\pi}$ from experience without a model, by moving each estimate toward a
+bootstrapped target:
+\begin{equation}
+Q(S_t,A_t) \leftarrow Q(S_t,A_t) + \alpha\big[\underbrace{R_{t+1} + \gamma\, Q(S_{t+1},A_{t+1})}_{\text{TD target}} - Q(S_t,A_t)\big].
+\end{equation}
+The bracketed quantity is the \emph{TD error} $\delta_t$. Learning requires no knowledge of $P$ or
+$R$: the environment supplies samples, and the update needs only the transition just experienced.
+
+\section{The two control algorithms}
+
+\subsection{SARSA --- on-policy control}
+
+SARSA applies TD(0) to the behaviour policy directly:
+\begin{equation}
+Q(S_t,A_t) \leftarrow Q(S_t,A_t) + \alpha\Big[R_{t+1} + \gamma\, Q(S_{t+1},A_{t+1}) - Q(S_t,A_t)\Big],
+\label{eq:sarsa}
+\end{equation}
+where $A_{t+1}$ is drawn from the same $\varepsilon$-greedy policy the agent is following and is
+the action it will actually execute. The update is a sample of the right-hand side of
+Equation~\ref{eq:bellman_exp}, so SARSA converges to $Q^{\pi}$ for the $\varepsilon$-greedy policy
+$\pi$ --- not to $Q^{*}$, unless $\varepsilon \to 0$.
+
+\subsection{Q-learning --- off-policy control}
+
+Q-learning replaces the sampled next action with a maximisation:
+\begin{equation}
+Q(S_t,A_t) \leftarrow Q(S_t,A_t) + \alpha\Big[R_{t+1} + \gamma \max_{a} Q(S_{t+1},a) - Q(S_t,A_t)\Big].
+\label{eq:qlearning}
+\end{equation}
+This is a sample of Equation~\ref{eq:bellman_opt}. The target no longer refers to the behaviour
+policy at all, so $Q$ converges to $Q^{*}$ under any behaviour policy that visits every
+state--action pair infinitely often.
+
+\subsection{The consequence, stated precisely}
+
+Consider a state $s$ on the main aisle, with the pedestrian walkway directly above it. Let $a_{\text{safe}}$
+be the action along the aisle and $a_{\text{bad}}$ the action into the walkway, with
+$R(s, a_{\text{bad}}) = -100$.
+
+Under \textbf{Q-learning}, the value of $s$ is backed up through $\max_a Q(s,a)$, which selects
+$a_{\text{safe}}$. The $-100$ never enters $V(s)$, because an optimal agent would never take that
+action. The aisle therefore looks exactly as good as any other corridor of the same length.
+
+Under \textbf{SARSA} with an $\varepsilon$-greedy policy, the backup is through
+$Q(s, A')$ where $A'$ is the action actually chosen, and
+\begin{equation}
+\operatorname{E}[Q(s,A')] = (1-\varepsilon)\max_a Q(s,a) + \frac{\varepsilon}{|\mathcal{A}|}\sum_{a} Q(s,a),
+\end{equation}
+which includes a term of weight $\varepsilon / |\mathcal{A}|$ on $Q(s, a_{\text{bad}})$. The
+$-100$ therefore propagates into $V(s)$, scaled by the probability of exploring into it. States
+beside the walkway are correspondingly devalued, and the safe lane becomes preferable.
+
+\keypoint{This is the whole mechanism.} It requires a hazard adjacent to the optimal route, a
+non-zero $\varepsilon$, and nothing else --- in particular, no stochasticity in the environment.
+
+
+\section{The algorithms in full}
+
+For completeness, both algorithms are stated in the form implemented in
+Chapter~\ref{ch:implementation}. The lines marked $\star$ are the only point at which they differ.
+
+\vspace{6pt}
+\noindent\begin{minipage}{\textwidth}
+\hrule
+\vspace{4pt}
+\textbf{Algorithm 1: Q-learning (off-policy TD control)}
+\vspace{2pt}
+\hrule
+\vspace{4pt}
+{\small
+\begin{tabbing}
+xxxx\=xxxx\=xxxx\=\kill
+Initialise $Q(s,a) = 0$ for all $s \in \mathcal{S}, a \in \mathcal{A}$ \\
+\textbf{for} each episode \textbf{do} \\
+\> $s \leftarrow$ initial state;\quad anneal $\varepsilon$ \\
+\> \textbf{repeat} \\
+\>\> choose $a$ from $s$ using the $\varepsilon$-greedy policy derived from $Q$ \\
+\>\> take action $a$, observe $r$ and $s'$ \\
+\>\> $\star$\ \ $Q(s,a) \leftarrow Q(s,a) + \alpha\left[r + \gamma \max_{a'} Q(s',a') - Q(s,a)\right]$ \\
+\>\> $s \leftarrow s'$ \\
+\> \textbf{until} $s$ is terminal \\
+\textbf{end for}
+\end{tabbing}}
+\hrule
+\end{minipage}
+
+\vspace{10pt}
+\noindent\begin{minipage}{\textwidth}
+\hrule
+\vspace{4pt}
+\textbf{Algorithm 2: SARSA (on-policy TD control)}
+\vspace{2pt}
+\hrule
+\vspace{4pt}
+{\small
+\begin{tabbing}
+xxxx\=xxxx\=xxxx\=\kill
+Initialise $Q(s,a) = 0$ for all $s \in \mathcal{S}, a \in \mathcal{A}$ \\
+\textbf{for} each episode \textbf{do} \\
+\> $s \leftarrow$ initial state;\quad anneal $\varepsilon$ \\
+\> choose $a$ from $s$ using the $\varepsilon$-greedy policy derived from $Q$ \\
+\> \textbf{repeat} \\
+\>\> take action $a$, observe $r$ and $s'$ \\
+\>\> choose $a'$ from $s'$ using the $\varepsilon$-greedy policy derived from $Q$ \\
+\>\> $\star$\ \ $Q(s,a) \leftarrow Q(s,a) + \alpha\left[r + \gamma\, Q(s',a') - Q(s,a)\right]$ \\
+\>\> $s \leftarrow s'$;\quad $a \leftarrow a'$ \\
+\> \textbf{until} $s$ is terminal \\
+\textbf{end for}
+\end{tabbing}}
+\hrule
+\end{minipage}
+\vspace{6pt}
+
+Two structural differences follow from that single line. SARSA must select $a'$ \emph{before} the
+update, because the update consumes it; and it must then reuse that same $a'$ on the next
+iteration, because otherwise the action it evaluated is not the action it took and the algorithm
+is no longer on-policy. Q-learning has no such constraint: its action for the next step is chosen
+freshly at the top of the loop, independently of the maximisation in its target.
+
+\section{Exploration and the epsilon schedule}
+
+An $\varepsilon$-greedy policy takes the greedy action with probability $1-\varepsilon$ and a
+uniformly random action otherwise:
+\begin{equation}
+\pi(a \mid s) = \begin{cases}
+1 - \varepsilon + \varepsilon/|\mathcal{A}| & \text{if } a = \arg\max_{a'} Q(s,a') \\
+\varepsilon/|\mathcal{A}| & \text{otherwise.}
+\end{cases}
+\end{equation}
+
+Both algorithms require sufficient exploration for their convergence guarantees. The schedule used
+here decays $\varepsilon$ linearly from $1.0$ to $0.05$ over the first 60\% of training and holds
+it thereafter. The residual $\varepsilon = 0.05$ is deliberate: were $\varepsilon$ driven to zero,
+SARSA would converge to the same policy as Q-learning and the effect under study would disappear
+by construction.
+
+\section{Convergence conditions}
+
+Both algorithms converge in the tabular case under the Robbins--Monro step-size conditions
+\begin{equation}
+\sum_{t=1}^{\infty} \alpha_t = \infty, \qquad \sum_{t=1}^{\infty} \alpha_t^{2} < \infty,
+\end{equation}
+together with infinite visitation of every state--action pair
+\cite{watkins1992,jaakkola1994,singh2000}.
+
+This study uses a constant $\alpha = 0.10$, which violates the second condition. The choice is
+deliberate and standard in practice: a constant step size does not converge to a point but to a
+bounded region around it, tracking non-stationarity instead. Since both algorithms use the same
+$\alpha$, the comparison is unaffected; and the asymptotic question is not what this study
+measures.
+
+\section{Complexity}
+
+Per timestep both algorithms perform $O(|\mathcal{A}|)$ work --- a maximisation for Q-learning, an
+action sample for SARSA --- and both store $O(|\mathcal{S}||\mathcal{A}|)$ values. For the
+warehouse here that is $400 \times 4 = 1600$ entries. The two are therefore indistinguishable in
+computational cost, which usefully removes one possible confound: any difference observed in the
+experiments is attributable to what is learned, not to how much computation was spent learning it.

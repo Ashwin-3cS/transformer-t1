@@ -1,0 +1,225 @@
+\appendix
+
+\chapter{Reproduction}
+\label{app:repro}
+
+Every figure and number in this report is produced by executing
+\code{rl\us warehouse\us qlearning\us vs\us sarsa.ipynb}. The repository is at
+\url{https://github.com/Ashwin-3cS/transformer-t1}.
+
+\section{Environment}
+
+{\small
+\begin{verbatim}
+uv venv .venv --python 3.14
+uv pip install --python .venv/bin/python numpy pandas scipy matplotlib kaggle ipykernel jupyter
+mkdir -p ~/.kaggle
+echo KGAT_xxxxxxxx > ~/.kaggle/access_token
+chmod 600 ~/.kaggle/access_token
+\end{verbatim}}
+
+\section{Execution}
+
+{\small
+\begin{verbatim}
+MPLBACKEND=Agg .venv/bin/jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=10800 rl_warehouse_qlearning_vs_sarsa.ipynb
+\end{verbatim}}
+
+Runtime is roughly four minutes on CPU: thirty paired seeds of 3{,}000 episodes, twelve floors for
+the generality check and six penalty settings for the sensitivity sweep. Setting
+\code{SMOKE\us TEST = True} reduces this to about a minute.
+
+Outputs are written to \code{artifacts/rl/}: \code{metrics.json},
+\code{per\us seed\us results.csv} and the six figures reproduced in this report.
+
+\section{Determinism}
+
+All generators are seeded. The experiment was executed twice during preparation; every reported
+metric, including the full McNemar-style paired table, was identical between runs.
+
+\chapter{Source Listings}
+\label{app:source}
+
+\section{The two agents}
+
+{\small
+\begin{verbatim}
+class TDControlAgent:
+    def __init__(self, n_states, n_actions, alpha=ALPHA, gamma=GAMMA,
+                 eps_start=EPS_START, eps_end=EPS_END, seed=SEED):
+        self.Q = np.zeros((n_states, n_actions), dtype=np.float64)
+        self.n_actions = n_actions
+        self.alpha, self.gamma = alpha, gamma
+        self.eps_start, self.eps_end, self.eps = eps_start, eps_end, eps_start
+        self.rng = np.random.default_rng(seed)
+
+    def set_epsilon(self, frac_done, decay_frac=EPS_DECAY_FRAC):
+        f = min(1.0, frac_done / decay_frac) if decay_frac > 0 else 1.0
+        self.eps = self.eps_start + f * (self.eps_end - self.eps_start)
+
+    def act(self, s):
+        if self.rng.random() < self.eps:
+            return int(self.rng.integers(self.n_actions))
+        return self.greedy(s)
+
+    def greedy(self, s):
+        q = self.Q[s]
+        return int(self.rng.choice(np.flatnonzero(q == q.max())))
+
+    def update(self, s, a, r, s_next, a_next, done):
+        self.Q[s, a] += self.alpha * (self._target(r, s_next, a_next, done) - self.Q[s, a])
+
+
+class QLearningAgent(TDControlAgent):
+    name = "Q-learning"
+    def _target(self, r, s_next, a_next, done):
+        return r if done else r + self.gamma * self.Q[s_next].max()
+
+
+class SarsaAgent(TDControlAgent):
+    name = "SARSA"
+    def _target(self, r, s_next, a_next, done):
+        return r if done else r + self.gamma * self.Q[s_next, a_next]
+\end{verbatim}}
+
+\section{Floor construction}
+
+{\small
+\begin{verbatim}
+def build_warehouse(patch_pool, tile=TILE, rng=None):
+    # Racking from the data; the cross-aisle and walkway are declared assumptions.
+    grid = compose_floor(patch_pool, tile, rng)
+    H_, W_ = grid.shape
+    rw = H_ // 2
+    grid[rw, :] = 0                               # walkway   (people)
+    grid[rw + 1, :] = 0                           # main aisle (the direct route)
+    grid[rw + 2, :] = 0                           # safe lane  (the detour)
+    walkway = np.zeros_like(grid, dtype=bool)
+    walkway[rw, :] = True
+    start, goal = (rw + 1, 0), (rw + 1, W_ - 1)
+    return grid, walkway, start, goal
+\end{verbatim}}
+
+\chapter{Verification Output}
+\label{app:verification}
+
+Produced on every execution, before training begins.
+
+{\small
+\begin{verbatim}
+check                                          result  detail
+--------------------------------------------------------------------------------
+State encoding bijective                       PASS    400 codes for 400 cells
+Bump: robot does not move                      PASS    stayed at (1, 1)
+Bump: penalty, episode continues               PASS    reward=-5.0, done=False
+Incident: returned to start                    PASS    pos=(1,1), start=(1,1)
+Incident: penalty, episode continues           PASS    reward=-100.0, done=False
+Goal: reward and termination                   PASS    reward=100.0, done=True
+BFS matches hand-checked grid                  PASS    BFS=8, expected 8
+BFS reports unreachable as -1                  PASS
+Optimal route avoids the walkway               PASS    legal route 19 steps
+eps=0: Q-learning and SARSA identical          PASS    max|Q_Q - Q_S| = 0.00e+00
+Q-learning: optimal on a 3x3 open grid         PASS    4 steps vs optimal 4
+SARSA: optimal on a 3x3 open grid              PASS    4 steps vs optimal 4
+Return accounting matches the environment      PASS    manual=-4446.0
+--------------------------------------------------------------------------------
+All 13 checks passed.
+\end{verbatim}}
+
+
+\chapter{Per-Seed Results}
+\label{app:perseed}
+
+The complete paired data underlying Chapter~\ref{ch:results}. Each row is one seed; both algorithms
+were trained under identical conditions for that seed, which is what licenses the paired tests.
+
+The consistency is itself informative. Every single seed produced a 19-step route for Q-learning and
+a 33-step route for SARSA, which is why the bootstrap confidence interval on the route-length
+difference collapses to the degenerate interval $[14, 14]$.
+
+\begin{longtable}{rrrrrrr}
+\toprule
+ & \multicolumn{3}{c}{\textbf{Q-learning}} & \multicolumn{3}{c}{\textbf{SARSA}} \\
+\textbf{Seed} & \textbf{Online} & \textbf{Incidents} & \textbf{Steps}
+              & \textbf{Online} & \textbf{Incidents} & \textbf{Steps} \\
+\midrule
+\endfirsthead
+\toprule
+ & \multicolumn{3}{c}{\textbf{Q-learning}} & \multicolumn{3}{c}{\textbf{SARSA}} \\
+\textbf{Seed} & \textbf{Online} & \textbf{Incidents} & \textbf{Steps}
+              & \textbf{Online} & \textbf{Incidents} & \textbf{Steps} \\
+\midrule
+\endhead
+ 0 &    -849.6 &  22{,}107 &    19 &    -297.4 &   5{,}214 &    33 \\
+ 1 &    -838.6 &  21{,}717 &    19 &    -291.5 &   5{,}080 &    33 \\
+ 2 &    -904.3 &  23{,}362 &    19 &    -297.4 &   5{,}046 &    33 \\
+ 3 &    -734.6 &  18{,}752 &    21 &    -300.9 &   5{,}290 &    33 \\
+ 4 &    -768.2 &  19{,}843 &    19 &    -286.7 &   4{,}974 &    33 \\
+ 5 &    -857.9 &  22{,}127 &    19 &    -297.6 &   5{,}125 &    33 \\
+ 6 &    -744.6 &  19{,}117 &    19 &    -301.3 &   5{,}061 &    35 \\
+ 7 &    -884.0 &  22{,}882 &    19 &    -313.9 &   5{,}114 &    33 \\
+ 8 &   -1041.6 &  26{,}816 &    19 &    -302.0 &   4{,}887 &    33 \\
+ 9 &    -907.9 &  23{,}459 &    19 &    -291.1 &   5{,}042 &    33 \\
+10 &    -837.9 &  21{,}774 &    19 &    -294.7 &   5{,}250 &    33 \\
+11 &    -807.2 &  20{,}709 &    19 &    -301.5 &   5{,}046 &    33 \\
+12 &    -715.0 &  18{,}234 &    21 &    -292.8 &   5{,}073 &    33 \\
+13 &    -923.1 &  24{,}039 &    19 &    -289.4 &   4{,}904 &    33 \\
+14 &    -663.6 &  16{,}873 &    21 &    -307.2 &   5{,}186 &    35 \\
+15 &    -647.2 &  16{,}405 &    21 &    -298.9 &   5{,}026 &    33 \\
+16 &    -719.5 &  18{,}583 &    21 &    -289.8 &   5{,}123 &    33 \\
+17 &    -776.4 &  20{,}006 &    19 &    -308.9 &   5{,}025 &    33 \\
+18 &    -890.5 &  23{,}014 &    19 &    -287.8 &   5{,}000 &    33 \\
+19 &    -850.1 &  21{,}997 &    19 &    -302.0 &   5{,}019 &    35 \\
+20 &    -907.7 &  23{,}412 &    19 &    -288.2 &   5{,}012 &    33 \\
+21 &    -816.9 &  21{,}057 &    19 &    -302.8 &   5{,}255 &    33 \\
+22 &    -766.8 &  19{,}804 &    19 &    -303.5 &   5{,}203 &    33 \\
+23 &    -931.6 &  24{,}259 &    19 &    -287.6 &   5{,}001 &    33 \\
+24 &    -655.7 &  16{,}918 &    21 &    -283.9 &   4{,}870 &    35 \\
+25 &    -935.8 &  24{,}115 &    19 &    -309.5 &   5{,}053 &    33 \\
+26 &   -1066.9 &  27{,}701 &    19 &    -301.1 &   5{,}112 &    33 \\
+27 &    -809.9 &  20{,}796 &    19 &    -289.9 &   5{,}057 &   nan \\
+28 &   -1054.3 &  27{,}284 &    19 &    -296.9 &   4{,}956 &    35 \\
+29 &    -842.2 &  21{,}610 &    19 &    -303.2 &   5{,}031 &    33 \\
+\bottomrule
+\end{longtable}
+
+\chapter{Summary of Key Figures}
+\label{app:summary}
+
+\begin{table}[ht]
+\centering
+\caption{Every headline quantity reported in this study.}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Quantity} & \textbf{Q-learning} & \textbf{SARSA} \\
+\midrule
+Online return (mean over training) & $-838.33$ & $-297.32$ \\
+Online return, final 20\% of training & $57.57$ & $63.18$ \\
+Walkway incidents during training & $21{,}625.73$ & $5{,}067.83$ \\
+Deployed route length (steps) & $19.40$ & $33.34$ \\
+Deployed success rate & $1.00$ & $0.97$ \\
+Mean distance from the walkway & $1.00$ & $5.21$ \\
+Excess steps over optimum, 12 floors & $2.17$ & $11.33$ \\
+Incidents, 12-floor generality check & $5{,}926.92$ & $1{,}792.42$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Shared experimental quantities.}
+\begin{tabular}{lr}
+\toprule
+\textbf{Quantity} & \textbf{Value} \\
+\midrule
+Floor size & $20 \times 20 = 400$ states \\
+Racking cells & $67$ (16.8\%) \\
+Optimal route (BFS) & $19$ steps \\
+Seeds per algorithm & $30$, paired \\
+Episodes per run & $3{,}000$ \\
+Verification checks passed & $13 / 13$ \\
+Generality check, Wilcoxon $p$ & $4.9\times10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{table}

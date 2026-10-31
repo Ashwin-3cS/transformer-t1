@@ -1,0 +1,154 @@
+\chapter{Implementation}
+\label{ch:implementation}
+
+\section{The from-scratch constraint}
+
+Both algorithms and the environment are written from first principles in NumPy. No reinforcement
+learning library is used: there is no \code{gymnasium}, no \code{stable-baselines}, and no
+pre-built agent. NumPy supplies array arithmetic and random number generation; everything
+specific to the MDP, to temporal-difference control, and to the two update rules is written out.
+
+\section{The environment}
+
+\code{WarehouseEnv} is a plain class with \code{reset()} and \code{step()}.
+
+{\small
+\begin{verbatim}
+def step(self, action):
+    self.t += 1
+    dr, dc = MOVES[action]
+    nr, nc = self.pos[0] + dr, self.pos[1] + dc
+    info = {}
+
+    if not (0 <= nr < self.H and 0 <= nc < self.W) or self.grid[nr, nc] == 1:
+        reward, done = self.r_bump, False        # nudge: no movement
+        info["bump"] = True
+    elif self.walkway[nr, nc]:
+        self.pos = self.start                    # incident: back to charger
+        reward, done = self.r_incident, False
+        info["incident"] = True
+    else:
+        self.pos = (nr, nc)
+        if self.pos == self.goal:
+            reward, done, info["goal"] = self.r_goal, True, True
+        else:
+            reward, done = self.r_step, False
+    if self.t >= self.max_steps:
+        done, info["timeout"] = True, True
+    return self.encode(self.pos), reward, done, info
+\end{verbatim}}
+
+The three outcomes are mutually exclusive and ordered deliberately: a cell that is both racking and
+walkway cannot occur by construction, and the boundary check precedes the grid lookup so that an
+out-of-bounds index is never formed.
+
+State encoding is $s = r \cdot W + c$ with the inverse $(s \div W,\; s \bmod W)$. Bijectivity over
+all 400 cells is asserted in Chapter~\ref{ch:verification}.
+
+\section{The shared agent}
+
+The two algorithms share a base class holding everything they have in common: the action-value
+table, $\varepsilon$-greedy action selection with random tie-breaking, and the $\varepsilon$
+schedule.
+
+{\small
+\begin{verbatim}
+class TDControlAgent:
+    def act(self, s):
+        if self.rng.random() < self.eps:
+            return int(self.rng.integers(self.n_actions))
+        return self.greedy(s)
+
+    def greedy(self, s):
+        q = self.Q[s]
+        return int(self.rng.choice(np.flatnonzero(q == q.max())))   # random tie-break
+
+    def update(self, s, a, r, s_next, a_next, done):
+        tgt = self._target(r, s_next, a_next, done)
+        self.Q[s, a] += self.alpha * (tgt - self.Q[s, a])
+\end{verbatim}}
+
+Random tie-breaking matters more than it appears. With $Q$ initialised to zeros every action ties
+initially, and breaking ties by \code{argmax} would bias the agent toward action $0$ --- ``up'',
+directly into the walkway --- producing an artefact that looks like a finding.
+
+\section{The one-line difference}
+
+The subclasses override a single method. This is the entire distinction between the two
+algorithms, and the code is arranged so that nothing else can differ:
+
+{\small
+\begin{verbatim}
+class QLearningAgent(TDControlAgent):
+    # Off-policy: bootstraps from the best available next action.
+    name = "Q-learning"
+    def _target(self, r, s_next, a_next, done):
+        return r if done else r + self.gamma * self.Q[s_next].max()
+
+
+class SarsaAgent(TDControlAgent):
+    # On-policy: bootstraps from the action actually selected for the next step.
+    name = "SARSA"
+    def _target(self, r, s_next, a_next, done):
+        return r if done else r + self.gamma * self.Q[s_next, a_next]
+\end{verbatim}}
+
+These implement Equations~\ref{eq:qlearning} and~\ref{eq:sarsa} respectively. Note the terminal
+handling: when \code{done} is true the target is $r$ alone, with no bootstrap term, since a
+terminal state has value zero by definition. Omitting that condition is a common error which
+inflates all values by a spurious $\gamma V(s_{\text{terminal}})$ term.
+
+\section{The episode loop}
+
+{\small
+\begin{verbatim}
+def run_episode(env, agent, learn=True, greedy=False):
+    s = env.reset()
+    a = agent.greedy(s) if greedy else agent.act(s)
+    while True:
+        s_next, r, done, info = env.step(a)
+        a_next = (agent.greedy(s_next) if greedy
+                  else agent.act(s_next)) if not done else 0
+        if learn:
+            agent.update(s, a, r, s_next, a_next, done)
+        if done: break
+        s, a = s_next, a_next
+\end{verbatim}}
+
+\keypoint{The critical detail is that \code{a\us next} is chosen before the update and then
+actually executed} on the following iteration, via \code{s, a = s\us next, a\us next}. SARSA is
+on-policy precisely because the action it bootstraps from is the action it takes. Sampling a fresh
+action after the update --- an easy and common slip --- silently converts SARSA into an
+inconsistent hybrid that still trains and still produces a plausible learning curve. The
+verification suite is designed to catch exactly this.
+
+\section{Experimental harness}
+
+A single \code{train()} function serves both algorithms, so the training budget is identical by
+construction rather than by careful duplication.
+
+\begin{table}[ht]
+\centering
+\caption[Hyperparameters]{Hyperparameters. Every value is shared between the two algorithms.}
+\label{tab:hyper}
+\begin{tabular}{lll}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Note} \\
+\midrule
+Learning rate $\alpha$      & $0.10$ & constant \\
+Discount $\gamma$           & $0.99$ & \\
+$\varepsilon$ schedule      & $1.0 \rightarrow 0.05$ & linear over the first 60\% of training \\
+Episodes per run            & 3{,}000 & \\
+Episode cap                 & 600 steps & \\
+Seeds                       & 30 & paired across algorithms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The residual $\varepsilon = 0.05$ is deliberate. Driving $\varepsilon$ to zero would make SARSA
+converge to the same policy as Q-learning, eliminating the effect under study by construction.
+
+Each seed trains both a Q-learning and a SARSA agent on the same floor with the same budget, the
+same hyperparameters and the same schedule. Evaluation is then performed separately with
+$\varepsilon = 0$, which distinguishes the policy the agent \emph{learned} from the behaviour it
+exhibited while learning --- the distinction on which the entire study turns.

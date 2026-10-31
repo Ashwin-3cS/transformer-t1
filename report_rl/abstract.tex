@@ -1,0 +1,47 @@
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+This report presents a controlled empirical comparison of the two classical tabular
+temporal-difference control algorithms --- Q-learning, which is off-policy, and SARSA, which is
+on-policy --- on the problem of learning a collision-free delivery route across a warehouse floor.
+Both algorithms are implemented from first principles, sharing every component except the single
+expression that forms their update target, so that the comparison isolates the on-policy/off-policy
+distinction rather than any difference of implementation.
+
+Obstacle layouts are taken from a published Kaggle dataset of warehouse navigation grids. A column
+by column audit of that dataset is reported as part of the methodology, because several of its
+columns prove to carry no usable information: its reward signal correlates $-0.03$ with the true
+shortest-path distance, its path-length field correlates $+0.01$, its convergence flag is constant,
+and its episode identifiers do not describe coherent trajectories. Those fields are excluded with
+the evidence shown. What remains sound --- 5{,}045 distinct occupancy grids with valid start and
+goal cells --- is used to build the environment, and exact ground truth is obtained by
+breadth-first search computed independently.
+
+The report is explicit about the boundary between data and assumption. The racking layout is real.
+The reward structure, the cross-aisle and the pedestrian walkway that constitutes the hazard are
+declared modelling choices, and the hazard penalty is subsequently varied across a sweep because
+the principal finding depends on it.
+
+Thirteen numerical checks verify the environment and both agents before any experiment is run,
+including an equivalence test establishing that at $\varepsilon = 0$ the two algorithms produce
+bit-identical action-value tables, as the mathematics requires.
+
+The experiment uses thirty seeds per algorithm, paired so that both algorithms see identical
+conditions, and reports Wilcoxon signed-rank tests with bootstrap confidence intervals. The
+results reproduce the classical prediction with large and highly significant effects. Q-learning
+converges on the optimal 19-step route running directly alongside the walkway, achieving a mean
+deployed route of 19.40 steps, but accumulates 21{,}626 safety incidents during training. SARSA
+learns a route averaging 33.34 steps at more than five times the distance from the walkway, and
+accumulates 5{,}068 incidents --- a factor of 4.3 fewer --- with significantly better online
+return ($p = 1.9\times10^{-9}$).
+
+Two further results qualify the finding. A sweep of the hazard penalty shows Q-learning's
+behaviour to be completely invariant to it, while SARSA's clearance from the walkway rises
+monotonically as the penalty grows: the mechanism is visible directly in the measurements. And on
+a floor without a localised hazard, both algorithms converge on the identical optimum, confirming
+that the distinction is a response to a property of the task rather than a general ranking of the
+two algorithms.
+
+\vspace{8pt}
+\noindent\textbf{Keywords:} reinforcement learning, temporal-difference control, Q-learning, SARSA,
+on-policy and off-policy learning, warehouse robotics, safe exploration, Cliff Walking.
